@@ -2,7 +2,7 @@
 - موتور تحلیل در engine.py است (ساخته‌شده از نوت‌بوک v23).
 - خروجی تحلیل فقط به‌صورت اعلان ntfy به گوشی می‌رود؛ لاگ عمومی Actions فقط وضعیت کوتاه نشان می‌دهد.
 """
-import os, sys, io, re, json, time, types, html, tempfile, traceback
+import os, sys, io, re, json, time, types, html, tempfile, traceback, threading
 
 _REAL = sys.__stdout__
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,10 +46,12 @@ def _ntfy(title, message, priority=3, tags=None):
         return False
     try:
         import requests
+        # هدر HTTP فقط ASCII؛ عنوان فارسی/ایموجی داخل بدنه می‌رود تا UnicodeEncodeError رخ ندهد.
+        body = f"{title}\n{message}" if title else str(message)
         r = requests.post(
             f"https://ntfy.sh/{topic}",
-            data=str(message).encode("utf-8"),
-            headers={"Title": str(title)[:100], "Priority": str(priority), "Tags": ",".join(tags or [])},
+            data=body.encode("utf-8"),
+            headers={"Title": "Infinity", "Priority": str(priority), "Tags": ",".join(tags or [])},
             timeout=15,
         )
         r.raise_for_status()
@@ -148,11 +150,33 @@ os.environ.setdefault("TA_AGENTS", "0")  # پیش‌فرض: تیم کامل ای
 rc, status = 0, "ok"
 t0 = time.time()
 _before_signals = _journal_count()
-_ntfy("🟢 شروع اسکن Infinity", f"اسکن جدید شروع شد. دارایی: {os.environ.get('TA_ASSET', 'ALL')} | زمان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t0))}", 3, ["rocket"])
+_ntfy("Infinity", f"🟢 شروع اسکن Infinity\nدارایی: {os.environ.get('TA_ASSET', 'ALL')}\nزمان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t0))}", 3, ["rocket"])
+
+# هشدار آماده‌باش: پنج دقیقه مانده به پایان مهلت جست‌وجوی موتور، مگر اینکه سیگنال زودتر ارسال شده باشد.
+_prewarn_stop = threading.Event()
+_search_minutes = max(1.0, float(os.environ.get("TA_SEARCH_MIN", "55") or 55))
+def _pre_signal_warning():
+    # اگر مهلت خیلی کوتاه باشد، دست‌کم ۶۰ ثانیه برای شروع موتور فرصت می‌دهیم.
+    wait_seconds = max(60.0, _search_minutes * 60.0 - 300.0)
+    deadline = time.monotonic() + wait_seconds
+    while not _prewarn_stop.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        _prewarn_stop.wait(min(remaining, 2.0))
+    if _prewarn_stop.is_set():
+        return
+    run_state = G.get("_RUN", {})
+    if isinstance(run_state, dict) and run_state.get("sent"):
+        return  # سیگنال نهایی زودتر رسیده؛ هشدار آماده‌باش دیگر لازم نیست.
+    _ntfy("Infinity", "⏳ احتمالاً تا ۵ دقیقهٔ دیگر تحلیل به پایان می‌رسد و نتیجه/سیگنال آماده می‌شود؛ آماده باشید! 🚀", 4, ["hourglass", "bell"])
+
+_prewarn_thread = threading.Thread(target=_pre_signal_warning, name="ntfy-pre-signal", daemon=True)
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
 if not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3")): say("⚠ هر سه کلید GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
 else:
     try:
+        _prewarn_thread.start()
         exec(compile(open(ENGINE, encoding="utf-8").read(), ENGINE, "exec"), G)
     except _HeadlessStop as e:
         status = f"skip ({e})"
@@ -162,7 +186,9 @@ else:
         say("خطا: " + tail)
         try: sys.stdout.flush(); log_tail = open(LOGP, encoding="utf-8", errors="ignore").read()[-700:]
         except Exception: log_tail = ""
-        _fail_notify("❌ اجرای GitHub خطا داد", tail + "\n---\n" + log_tail)
+        _fail_notify("Infinity error", tail + "\n---\n" + log_tail)
+    finally:
+        _prewarn_stop.set()
 duration = (time.time() - t0) / 60
 _after_signals = _journal_count()
 _new_signals = max(0, _after_signals - _before_signals)
@@ -185,6 +211,6 @@ except Exception as e:
     say(f"⚠ ذخیره گزارش ناموفق بود: {type(e).__name__}")
 
 say(f"TradingAgents: {status} · {duration:.1f} دقیقه · سیگنال جدید: {_new_signals}")
-_ntfy("✅ پایان اسکن Infinity" if rc == 0 else "❌ پایان اسکن با خطا", summary, 4 if rc else 3, ["white_check_mark"] if rc == 0 else ["warning"])
+# پیام پایانِ جداگانه عمداً حذف شده؛ پیام نهایی سیگنال را خود engine.py ارسال می‌کند.
 sys.stdout.flush()
 os._exit(rc)      # نخ‌های پس‌زمینه بسته شوند؛ Actions منتظر نماند
