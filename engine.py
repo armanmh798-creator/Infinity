@@ -1,4 +1,4 @@
-# TradingAgents Ultimate · موتور GitHub Actions (ساخته‌شده از نوت‌بوک v23). این فایل را دستی ویرایش نکنید؛ تغییرات را در نوت‌بوک بدهید و دوباره بسازید.
+# TradingAgents · موتور واحد v26. همین کد هم در گیت‌هاب (run.py) و هم در سلول ۲ نوت‌بوک کولب اجرا می‌شود؛ هر تغییری فقط یک‌بار و همین‌جا داده شود.
 import os, re, time, json, getpass, requests
 
 LLM_PROVIDER = "google"      # "google" = Gemini (پیش‌فرض) | "rayegan" = مدل‌های رایگان از چند سرویس (v22)
@@ -624,6 +624,8 @@ SPREAD_MIN_MULT = 5.0                         # SL حداقل این × اسپر
 FEE_RATE = {k_: 0.0003 for k_ in ("BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX")}  # کارمزد هر سمت در بک‌تست (کریپتو ≈ ۰٫۰۳٪)
 # ---- استراتژی‌ها و بک‌تست ----
 STRAT_ON = True                               # سیگنال فقط از استراتژی‌های کتابچه
+TREND_LOCK = os.environ.get("TA_TREND_LOCK", "1") != "0"      # v25: اصل کار: بازار روز مثبت = فقط شکارِ BUY، بازار منفی = فقط شکارِ SELL (روند چندتایم‌فریم)؛ بازار بی‌جهت = هر دو سمت آزاد
+TREND_MIN_SCORE = 1.5                         # قدرت روند (جمع وزنی ۱۵م=۰٫۵، ۱س=۱، ۴س=۱) از این بیشتر باشد = جهتِ روز قفل می‌شود
 STRAT_REQUIRED = True                         # True = بدون استراتژی فعال سیگنال نمی‌دهد
 STRAT_DAYS = 58                               # روزهای بک‌تست در حالت تک‌دارایی
 STRAT_DAYS_ALL = 30                           # روزهای بک‌تست مرحلهٔ اول اسکن ALL (غربال سریع)
@@ -634,7 +636,7 @@ ALL_NEED_ROOM = True                          # v23: ALL فقط نامزدی ر�
 ALL_REPEAT_HOURS = 3                           # ALL: دارایی‌ای که در این چند ساعت اخیر سیگنال گرفته، کمی عقب می‌افتد (جلوگیری از تکرارِ همیشگی یک ارز)
 ALL_REPEAT_PEN = 0.15                          # مقدار جریمه (هم‌مقیاس امتیاز بک‌تست / آمادگی)
 ALL_FALLBACK = _FALLBACK                         # GitHub: پیش‌فرض خاموش؛ سیگنال کم‌اطمینان نمی‌دهد (برای معامله خودکار)
-ALL_LLM_TOPK = 4                              # v23: ALL بعد از بک‌تست کامل، این‌قدر نامزد برتر را به اعضای مدلی هم می‌دهد (اقتصاددان، شورای ۱۴ نفره، ایجنت ICT/SMC، میز و مدیر سبد، مدیرعامل). رد مدیرعامل = حذف نامزد. هر نامزد ≈ ۵ تا ۸ تماس مدل؛ ۰ = خاموش
+ALL_LLM_TOPK = 2                              # v23: ALL بعد از بک‌تست کامل، این‌قدر نامزد برتر را به اعضای مدلی هم می‌دهد (اقتصاددان، شورای ۱۴ نفره، ایجنت ICT/SMC، میز و مدیر سبد، مدیرعامل). رد مدیرعامل = حذف نامزد. هر نامزد ≈ ۵ تا ۸ تماس مدل؛ ۰ = خاموش
 ALL_SKIP_CLOSED = True                        # v23: دارایی‌های غیرکریپتو (فارکس، طلا، شاخص، نفت) آخر هفته (جمعه ۲۲ تا یکشنبه ۲۲ UTC) اصلاً اسکن نمی‌شوند؛ کریپتو ۲۴/۷ است
 ALL_CRYPTO = ("BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX")
 STRAT_LAB_HOURS = 12                          # کش نتیجهٔ بک‌تست (ساعت)
@@ -646,7 +648,7 @@ STRAT_PIN_GRACE = 30                          # مهلت اضافهٔ اعتبا
 STRAT_TEAM_W = 0.25                           # وزن رأی ۱۴ عضو در انتخاب استراتژی
 STRAT_GOLD_SCORE = 0.10                       # حداقل امتیاز بک‌تست برای 🥇 GOLD
 STRAT_NEG_SCORE = -0.05                       # امتیاز زیر این = «بک‌تست ضعیف» (پرچم ریسک)
-STRAT_DESK_LLM = True                         # ۱۴ عضو با یک تماس مدل استراتژی را انتخاب کنند
+STRAT_DESK_LLM = False                        # v25 سبک: انتخاب استراتژی فقط از روی بک‌تست (بدون ۱۴ عضو مدلی). True = روشن
 BT_LIMIT_ENTRY = True                         # بک‌تست با ورود لیمیت واقعی
 OOS_FRAC = 0.4                                # سهم آخرِ داده برای آزمون خارج‌ازنمونه
 OOS_MIN_N = 5                                 # زیر این تعداد معامله، OOS قضاوت نمی‌شود
@@ -655,7 +657,9 @@ EXAM_CASES = 10                               # تعداد موقعیت‌های
 EXAM_REFRESH_H = 12                           # آزمون هر چند ساعت تکرار شود
 # ---- تیم عامل‌ها و مدل ----
 AGENT_TIMEOUT_MIN = 30                        # سقف زمان کل تیم (دقیقه)
-DEBATE_ROUNDS = 2                             # دور بحث خوش‌بین/بدبین
+DEBATE_ROUNDS = 2                             # دور بحث خوش‌بین/بدبین (دو تریدر: خوش‌بین و بدبین، ۲ دور مذاکره)
+AN_SEL = [x_.strip() for x_ in os.environ.get("TA_ANALYSTS", "market,fundamentals").split(",") if x_.strip()] or ["market", "fundamentals"]      # v25 سبک: تحلیلگر تکنیکال (market) + بنیادی (fundamentals)؛ برای برگرداندن همه: TA_ANALYSTS=market,social,news,fundamentals
+RISK_USD = float(os.environ.get("TA_RISK_USD", "100") or 100)      # v25: ریسک ثابت هر ترید (دلار) = «۱R»؛ حجم از روی فاصلهٔ SL حساب و در اعلان نوشته می‌شود
 RISK_ROUNDS = 1                               # دور بحث ریسک
 AGENT_RETRIES = 2                             # تلاش مجدد تیم هنگام خطا (مثلاً ۴۲۹)
 AGENT_RETRY_WAIT = 40                         # صبر بین تلاش‌ها (ثانیه)
@@ -670,7 +674,7 @@ DESK_ON = True                                # میز مناظره تکنیکا
 DESK_ROUNDS = 1                               # دور انتقاد متقابل میز
 CEO_ON = True                                 # مدیرعامل: حکم نهایی GO / WAIT / NO
 COUNCIL_ON = True                             # شورای ۱۴ نفره رأی‌دهندهٔ جهت (فعال: رأی هر سبک زیر هر سیگنال نمایش داده می‌شود)
-COUNCIL_LLM = True                            # یک تماس مدل برای شورا
+COUNCIL_LLM = False                           # v25 سبک: بدون تماس مدل برای شورا (شورا فقط با رأی‌های کدِ قطعی، رایگان). True = ۱۳ سبک مدلی هم رأی بدهند
 COUNCIL_REFRESH_MIN = 20                      # کش بخش مدلیِ شورا (دقیقه)
 COUNCIL_LEAN_NET = 1.2                        # تیم «نگه‌دار» گفت و شورا قوی‌تر از این بود: جهت از شورا
 ICT_AS_MEMBER = True                          # ایجنت ICT/SMC فقط یکی از اعضای شورا (بدون وتو)
@@ -737,6 +741,11 @@ LIVE_SECONDS = 30                             # مدت آپدیت زندهٔ ق�
 REFRESH_EVERY = 2                             # هر چند ثانیه یک‌بار
 # ---- ژورنال و فایل‌ها ----
 SHADOW_ON = True                              # ثبت سیگنال‌های ردشده با ورود/SL/TP فرضی
+LEAN = os.environ.get("TA_LEAN", "1") != "0"   # v26: موتور سبک (پیش‌فرض). TA_LEAN=0 = همهٔ لایه‌های اضافه (میز مناظره، شورای ۱۴ نفره، اقتصاددان، رئیس شورا) هم روشن شوند
+if LEAN:
+    DESK_ON = False; COUNCIL_ON = False; COUNCIL_LLM = False; ECON_ON = False; CHAIR_ON = False; STRAT_DESK_LLM = False; SHOCK_ON = False
+    STRAT_REQUIRED = False                    # کتابچهٔ استراتژی فقط مشاور است؛ نبودنش مانع معامله نیست
+    ALL_REQUIRE_DEEP = False                  # فقط ستاپ فعال کافی است؛ تأیید بک‌تست کامل شرط نیست (اگر بود امتیازش بالاتر می‌شود)
 SHADOW_PATH = os.path.join(_DATA, "scalp_shadow.jsonl")
 SIGNALS_PATH = os.path.join(_DATA, "scalp_journal_signals.jsonl")
 JOURNAL_PATH = os.path.join(_DATA, "scalp_journal.jsonl")
@@ -930,7 +939,7 @@ class AgentProgress(BaseCallbackHandler):
             now = time.time(); new = self.events[self.sent:]; self.sent = len(self.events)
             nb = self.turns.get("Bull Researcher", 0); nr = self.turns.get("Bear Researcher", 0)
             risk = sum(self.turns.get(r, 0) for r in ("Aggressive Analyst", "Neutral Analyst", "Conservative Analyst"))
-            L = [f"      پیشرفت: تحلیلگران {len(self.done)}/4 | بحث خوش‌بین/بدبین {nb}+{nr} از {DEBATE_ROUNDS}+{DEBATE_ROUNDS} | مدیر تحقیقات {self.turns.get('Research Manager', 0)}/1 | معامله‌گر {self.turns.get('Trader', 0)}/1 | ریسک {risk}/{3 * RISK_ROUNDS} | مدیر سبد {self.turns.get('Portfolio Manager', 0)}/1",
+            L = [f"      پیشرفت: تحلیلگران {len(self.done)}/{len(AN_SEL)} | بحث خوش‌بین/بدبین {nb}+{nr} از {DEBATE_ROUNDS}+{DEBATE_ROUNDS} | مدیر تحقیقات {self.turns.get('Research Manager', 0)}/1 | معامله‌گر {self.turns.get('Trader', 0)}/1 | ریسک {risk}/{3 * RISK_ROUNDS} | مدیر سبد {self.turns.get('Portfolio Manager', 0)}/1",
                  f"      آمار: تماس مدل {self.llm} | ابزار {self.tools} | خطای مدل {self.errs}"]
             if len(new) > max_events: L.append(f"      … و {len(new) - max_events} رویداد قبلی‌تر"); new = new[-max_events:]
             L += ["      " + x for x in new]
@@ -950,7 +959,10 @@ def run_agents():
         try:
             cfg = DEFAULT_CONFIG.copy(); cfg["max_debate_rounds"] = DEBATE_ROUNDS; cfg["max_risk_discuss_rounds"] = RISK_ROUNDS
             cfg["max_tool_rounds"] = MAX_TOOL_ROUNDS; cfg["news_article_limit"] = NEWS_LIMIT; cfg["global_news_article_limit"] = max(3, NEWS_LIMIT // 2)
-            ta = TradingAgentsGraph(debug=False, config=cfg, callbacks=[PROG] if use_cb else None)   # تیم کامل، بدون حذف هیچ عاملی
+            try: ta = TradingAgentsGraph(selected_analysts=AN_SEL, debug=False, config=cfg, callbacks=[PROG] if use_cb else None)      # v25 سبک: تحلیلگر تکنیکال + بنیادی، سپس بحث خوش‌بین/بدبین
+            except TypeError as _te:
+                if 'selected_analysts' not in str(_te): raise
+                print('ℹ این نسخهٔ TradingAgents انتخاب تحلیلگر را نمی‌پذیرد؛ با تیم کامل اجرا می‌شود.'); ta = TradingAgentsGraph(debug=False, config=cfg, callbacks=[PROG] if use_cb else None)
             state, rating = ta.propagate(sym, day.strftime("%Y-%m-%d"), asset_type=atype)
             r = str(rating).lower()
             return (1 if r in ("buy", "overweight") else -1 if r in ("sell", "underweight") else 0), rating, state
@@ -972,7 +984,7 @@ def _agent_board(t_start, final=False):
             tn = dict(PROG.turns); nd = len(PROG.done); busy = [ROLE_FA.get(r, r) for t, r in PROG.active.values()] + [ROLE_FA.get(r, r) + ": " + TOOL_FA.get(n, n).replace("{}", "") for t, r, n, _ in PROG.tactive.values()]
             evs = list(PROG.events[-4:]); llm, tools, errs = PROG.llm, PROG.tools, PROG.errs
         risk = sum(tn.get(r, 0) for r in ("Aggressive Analyst", "Neutral Analyst", "Conservative Analyst"))
-        stg = [("📰 تحلیلگران", nd, 4, .40), ("🐂🐻 بحث خوش‌بین/بدبین", tn.get("Bull Researcher", 0) + tn.get("Bear Researcher", 0), 2 * DEBATE_ROUNDS, .18), ("🧑‍⚖️ مدیر تحقیقات", tn.get("Research Manager", 0), 1, .06),
+        stg = [("📰 تحلیلگران", nd, max(1, len(AN_SEL)), .40), ("🐂🐻 بحث خوش‌بین/بدبین", tn.get("Bull Researcher", 0) + tn.get("Bear Researcher", 0), 2 * DEBATE_ROUNDS, .18), ("🧑‍⚖️ مدیر تحقیقات", tn.get("Research Manager", 0), 1, .06),
                ("📈 معامله‌گر", tn.get("Trader", 0), 1, .06), ("🛡 بحث ریسک", risk, 3 * RISK_ROUNDS, .18), ("👔 مدیر سبد", tn.get("Portfolio Manager", 0), 1, .12)]
         frac = sum(w * min(1.0, d_ / max(t_, 1)) for _, d_, t_, w in stg); el = time.time() - t_start
         rem = max(30.0, el * (1 - frac) / frac) if frac > 0.08 else max(60.0, 420.0 - el)
@@ -1568,6 +1580,8 @@ Two real failures to avoid:
 Pattern that has worked in recent live setups (mirror it for longs): with the 1h/4h structure and most timeframes aligned, a limit order at a premium (short) or discount (long) array or at a retest of a lower high / higher low, the stop BEYOND the swept liquidity or swing, targets 1.5R and 3R toward unswept liquidity on the other side. Treat it as a pattern to recognise, not as a reason to say GO without evidence.
 
 TRENDLINE RULE (owner's hard rule): trade WITH the trendline trend. The report lists unbroken TRENDLINES and a TREND BIAS line. Strongly prefer a GO in the direction of the 1h trendline trend (or the 15m one when 1h has none): in a trending day trade with the trend and wait for it instead of fading it. The best entries are the first or second RETEST of a rising support (long) or a falling resistance (short), ideally inside an unmitigated FVG/OB there, after a sweep of the liquidity just beyond the line. The stop goes BEYOND that liquidity pool, never just under/over the trendline itself (the line is exactly where the crowd puts its stop). A counter-trend idea is NOT forbidden, but it is the exception: allow it only with a complete A+ sequence (sweep -> displacement -> MSS) at a major pool, give it a clearly lower confidence (at least 2 points less) and say so in risks; otherwise prefer WAIT and name the trigger (a confirmed break and retest of the line, or a pullback to the trendline in the trend direction). Win rate matters more than frequency: a limit order waiting a little away from the live price at the retest zone is welcome, never chase price.
+
+FIXED MONEY MANAGEMENT (the owner's core rule): every trade risks exactly 1R, the SAME fixed money amount; the targets are FIXED at TP1 = <<R1>>R (half of the position, then the stop moves to entry) and TP2 = <<R2>>R. Never propose another risk size, another target multiple, an extra partial or any improvisation; the only thing that adapts is the position size to the stop distance. A setup whose structure does not leave room for <<R2>>R before strong opposing liquidity is a WAIT, not a trade with smaller targets. DAY DIRECTION (core rule): trade with the day's direction: on a bullish day hunt BUYS, on a bearish day hunt SELLS; counter-direction only as a rare, fully confirmed exception. Think like a hunter: let price come to the retest/liquidity zone, never chase it.
 
 Use ONLY the data below. The data contains a mandatory RSI line and a CROWD STOP MAP: you MUST say in your summary or risks whether RSI (5m/15m/1h and any divergence) supports or contradicts the entry (RSI stretched in the trade direction, or a divergence against it, is a RISK to flag, not a veto), and the stop you recommend MUST sit beyond the nearest crowd-stop pool with a buffer, never inside or at a pool and never exactly on a round number. Never invent prices or data; refer to levels by their IDs (H1, L2, F1, O1, I1 ...). If a data block says "no data", say so and judge without it.
 
@@ -2239,6 +2253,8 @@ SCHEDULED NEWS (Forex Factory): <<NEWS>>
 DISCIPLINE: today's closed R = <<TODAYR>> over <<TODAYN>> trades; current losing streak = <<STREAK>>
 JOURNAL BY TIER (n, win-rate): <<TIERS>>
 LESSONS FROM THE JOURNAL: <<LESSONS>>
+FIXED MONEY MANAGEMENT (the owner's core rule): every trade risks exactly 1R, the SAME fixed money amount; the targets are FIXED at TP1 = <<R1>>R (half of the position, then the stop moves to entry) and TP2 = <<R2>>R. Never propose another risk size, another target multiple, an extra partial or any improvisation; the only thing that adapts is the position size to the stop distance. A setup whose structure does not leave room for <<R2>>R before strong opposing liquidity is a WAIT, not a trade with smaller targets. DAY DIRECTION (core rule): trade with the day's direction: on a bullish day hunt BUYS, on a bearish day hunt SELLS; counter-direction only as a rare, fully confirmed exception. Think like a hunter: let price come to the retest/liquidity zone, never chase it.
+
 ENGINE REPORT:
 <<REPORT>>
 
@@ -3420,6 +3436,11 @@ def _notify_signal(since, from_watch=False):
                    f"👔 مدیرعامل: {g.get('ceo_verdict') or '-'} {('· درجه ' + str(g.get('ceo_grade'))) if g.get('ceo_grade') else ''}\n{line}\n"
                    f"🎯 ورود: {g.get('entry')}\n🛑 حد ضرر: {g.get('sl')}\n✅ تارگت ۱: {g.get('tp1')}\n🏁 تارگت ۲: {g.get('tp2')}\n{line}\n"
                    f"⚖ ریوارد نهایی: ۱ به {_rrv}\n⏳ سفارش لیمیت تا ۱ ساعت معتبر است؛ بعد از آن لغو کنید. قیمت لحظه‌ای را با چارت خودتان بسنجید.")
+            try:      # v25: ریسک ثابت؛ حجم از روی فاصلهٔ SL
+                _ru = abs(float(g["entry"]) - float(g["sl"])); _un = RISK_USD / _ru
+                msg += (f"\n{line}\n💼 ریسک ثابت ${RISK_USD:g} ← حجم ≈ {_un:,.6g} واحد (≈ ${_un * float(g['entry']):,.0f})\n"
+                        f"📉 SL: −${RISK_USD:g} · ✅ TP1 (نصف حجم، بعدش SL روی ورود): +${RISK_USD * R_OF['TP1+BE']:,.0f} · 🏁 TP2: +${RISK_USD * R_OF['TP2']:,.0f}")
+            except Exception: pass
             _fl = [str(x_) for x_ in (g.get("flags") or [])][:3]
             if _fl: msg += "\n⚠️ پرچم‌های ریسک: " + " | ".join(_fl)
             if g.get("size_adv") is not None and g["size_adv"] < 1.0: msg += f"\nℹ️ فقط اطلاع: با این پرچم‌ها سیستم ریسک {g['size_adv']:.0%} را پیشنهاد می‌کرد؛ خودکار کم نشد (حجم با خودتان)."
@@ -3478,17 +3499,19 @@ def _shock_txt(sh):
 STRATS = {
     "trend": dict(n="روندپیرو (تقاطع میانگین‌ها)", e="📈", run=True, tf="۱۵م",
                   rule="EMA20 از EMA50 به سمت بالا (پایین) عبور کند و ADX≥20 و رو به افزایش باشد → خرید (فروش). مناسب بازارهای روندی؛ وین‌ریت پایین ولی سود بزرگ؛ در رنج ضربه می‌خورد."),
-    "meanrev": dict(n="بازگشت به میانگین (بولینگر + RSI)", e="🧲", run=True, tf="۱۵م",
+    "meanrev": dict(n="بازگشت به میانگین (بولینگر + RSI)", e="🧲", run=False, tf="۱۵م",
                     rule="کلوز زیر باند پایین بولینگر(۲۰،۲) بود و دوباره به داخل برگشت و RSI در ۳ کندل اخیر زیر ۳۵ رفت (ADX<28) → خرید؛ برعکسش فروش. مناسب رنج؛ وین‌ریت متوسط‌بالا؛ در روند قوی خطرناک."),
     "brk": dict(n="شکست قیمت (کانال دونچین)", e="💥", run=True, tf="۱۵م",
                 rule="کلوز بالای سقف ۴۰ کندل قبل (یا زیر کف) با حجم ≥۱٫۲ برابر میانگین (اگر حجم هست) → ورود در جهت شکست. شکست‌های کاذب زیاد؛ ریوارد خوب."),
     "vol": dict(n="شکست نوسان (فشردگی ← انفجار)", e="🌋", run=True, tf="۱۵م",
                 rule="پهنای باند بولینگر در ۲۰٪ پایین ۲۰۰ کندل اخیر بوده (فشردگی) و بعد کندلی با رنج ≥۱٫۵ ATR که از باند بیرون بسته شود → ورود هم‌جهت. مناسب شروع حرکات اخبار/سشن."),
-    "mom": dict(n="مومنتوم/اسیلاتور (RSI + استوکاستیک)", e="🚀", run=True, tf="۱۵م",
+    "sweep": dict(n="سویپ نقدینگی ← جابه‌جایی ← MSS (ICT)", e="🎯", run=True, tf="۱۵م",
+                  rule="قیمت سقف (کف) ۲۴ کندل قبل را با سایه می‌شکند ولی کلوزش داخل برمی‌گردد (سویپ نقدینگی)؛ ظرف ۳ کندل بعد، یک کندل بدنه‌دار (≥۰٫۸ ATR) خلاف جهت سویپ، زیر کف (بالای سقف) کندل‌های سویپ می‌بندد (جابه‌جایی + شکست ساختار) → ورود فروش (خرید) از ناحیهٔ پریمیوم (دیسکانت) با لیمیت و استاپ پشت اکستریم سویپ."),
+    "mom": dict(n="مومنتوم/اسیلاتور (RSI + استوکاستیک)", e="🚀", run=False, tf="۱۵م",
                 rule="RSI14 از زیر ۳۰ به بالا (یا از بالای ۷۰ به پایین) برگردد و استوکاستیک ۱۴،۳،۳ هم‌جهت تقاطع کرده باشد → خرید (فروش). وین‌ریت متوسط؛ مناسب بازارهای نوسانی."),
-    "scalp": dict(n="اسکالپینگ سریع (EMA5/10 روی ۵م)", e="⚡", run=True, tf="۵م",
+    "scalp": dict(n="اسکالپینگ سریع (EMA5/10 روی ۵م)", e="⚡", run=False, tf="۵م",
                   rule="تقاطع EMA5 و EMA10 روی ۵م + RSI7 هم‌جهت (>۵۵ یا <۴۵) + جهت ۱۵م هم‌سو؛ فقط در سشن‌های پرنقدینگی (لندن و همپوشانی). نیاز به اسپرد کم."),
-    "pairs": dict(n="جفت‌معامله / آربیتراژ آماری", e="🔗", run=True, tf="۱۵م",
+    "pairs": dict(n="جفت‌معامله / آربیتراژ آماری", e="🔗", run=False, tf="۱۵م",
                   rule="نسبت قیمت دارایی به جفت همبسته‌اش (BTC↔ETH، طلا↔نقره، داو↔نزدک، WTI↔برنت) Z-score ۲۴ ساعته؛ Z>۲ = دارایی گران‌تر شده → فروش؛ Z<−۲ → خرید. (در این ربات فقط پای همین دارایی معامله می‌شود)."),
     "grid": dict(n="گرید", e="🕸", run=False, tf="-",
                  rule="سفارش‌های چندپله‌ای در رنج. با مدیریت ثابت «یک ورود، یک SL، ۱R» سازگار نیست (مارتینگل‌گونه، در روند قوی ضرر انباشته). فقط به‌عنوان نشانهٔ «بازار رنج است» گزارش می‌شود."),
@@ -3497,6 +3520,7 @@ STRATS = {
     "ml": dict(n="یادگیری ماشین / کمّی", e="🤖", run=False, tf="-",
                rule="نیاز به داده و آموزش/اعتبارسنجی خارج از این نوت‌بوک و خطر اورفیت دارد. جایگزین عملی: بک‌تستِ زنده و آزمون تیم که هر بار انجام می‌شود."),
 }
+# v25 سبک: فقط trend / brk / vol / sweep فعالند (sweep = مدل برنده‌های مالک: سویپ ← جابه‌جایی ← MSS). meanrev, mom, scalp, pairs فقط با run=True دوباره روشن می‌شوند.
 RUNNABLE = [k for k, v in STRATS.items() if v["run"]]
 SESS_FA = {"ASIA": "آسیا", "LONDON": "لندن", "OVERLAP": "همپوشانی لندن/نیویورک", "NY_LATE": "نیویورک عصر", "WKND": "آخر هفته"}
 SESS_UTC = {"ASIA": "22–07", "LONDON": "07–12", "OVERLAP": "12–17", "NY_LATE": "17–22", "WKND": "شنبه/یکشنبه"}
@@ -3539,6 +3563,24 @@ def _events_from(sig, av, px, a, cool):
         if i - last > cool: out.append((av[i], int(v[i]), float(px[i]), float(a[i]))); last = i
     return pd.DataFrame(out, columns=["av", "side", "px", "a"])
 
+def _sweep_sig(o, h, l, c, a, look=24, wait=3, body=0.8):
+    """v26: سویپ ← جابه‌جایی ← MSS روی ۱۵م (علّی، بدون نگاه به آینده). خروجی: سری سیگنال (+1/-1/0) و سری سویپِ تازه (+1 = کف گرفته شد، -1 = سقف گرفته شد)."""
+    o, h, l, c, a = (np.asarray(x_, dtype=float) for x_ in (o, h, l, c, a)); N = len(c)
+    hh = pd.Series(h).rolling(look).max().shift(1).values; ll = pd.Series(l).rolling(look).min().shift(1).values
+    swp = np.zeros(N, dtype=int)
+    for i in range(look + 1, N):
+        if not (a[i] == a[i] and a[i] > 0): continue
+        if h[i] > hh[i] + 0.05 * a[i] and c[i] < hh[i]: swp[i] = -1
+        elif l[i] < ll[i] - 0.05 * a[i] and c[i] > ll[i]: swp[i] = 1
+    sig = np.zeros(N, dtype=int)
+    for j in range(look + 2, N):
+        if not (a[j] == a[j] and a[j] > 0): continue
+        for k in range(1, wait + 1):
+            i = j - k; b = swp[i]
+            if b == -1 and c[j] < o[j] and (o[j] - c[j]) >= body * a[j] and c[j] < l[i:j].min(): sig[j] = -1; break
+            if b == 1 and c[j] > o[j] and (c[j] - o[j]) >= body * a[j] and c[j] > h[i:j].max(): sig[j] = 1; break
+    return sig, swp
+
 def _strat_signals(d5, pair5=None):
     """همهٔ قوانین PDF روی دادهٔ ۵م. خروجی: رویدادها، زمینهٔ هر کندل ۱۵م (برای آزمون) و وضعیتِ «در حال شکل‌گیری» برای کندل آخر."""
     has_v = "Volume" in d5.columns and float(d5["Volume"].sum()) > 0
@@ -3557,6 +3599,7 @@ def _strat_signals(d5, pair5=None):
     S["brk"] = ((c > hh + 0.1 * a) & (c.shift(1) <= hh.shift(1)) & vok).astype(int) - ((c < ll - 0.1 * a) & (c.shift(1) >= ll.shift(1)) & vok).astype(int)
     sq = (bwp <= 0.2).astype(float).rolling(8).max().shift(1) > 0; big = (h - l) >= 1.5 * a.shift(1)
     S["vol"] = (sq & big & (c > o) & (c > up.shift(1))).astype(int) - (sq & big & (c < o) & (c < lo.shift(1))).astype(int)
+    _sg, _sw = _sweep_sig(o.values, h.values, l.values, c.values, a.values); S["sweep"] = pd.Series(_sg, index=r.index)
     ll14, hh14 = l.rolling(14).min(), h.rolling(14).max(); K = (100 * (c - ll14) / (hh14 - ll14).replace(0, np.nan)).rolling(3).mean(); Dd = K.rolling(3).mean()
     rU = ((rsi.shift(1) < 30) & (rsi >= 30)).astype(float).rolling(3).max() > 0; rD = ((rsi.shift(1) > 70) & (rsi <= 70)).astype(float).rolling(3).max() > 0
     sU = (K > Dd) & (K.rolling(6).min() < 30); sD = (K < Dd) & (K.rolling(6).max() > 70)
@@ -3579,6 +3622,9 @@ def _strat_signals(d5, pair5=None):
     if float(hh.iloc[-1]) - cl <= 0.3 * hh_ and cl <= float(hh.iloc[-1]): ARM["brk"] = (1, f"نزدیک سقف ۴۰ کندل ({float(hh.iloc[-1]):,.{PXD}f}) است؛ منتظر کلوز بالای آن")
     elif cl - float(ll.iloc[-1]) <= 0.3 * hh_ and cl >= float(ll.iloc[-1]): ARM["brk"] = (-1, f"نزدیک کف ۴۰ کندل ({float(ll.iloc[-1]):,.{PXD}f}) است؛ منتظر کلوز زیر آن")
     if float(bwp.iloc[-1]) <= 0.2: ARM["vol"] = (0, f"فشردگی نوسان (باند تنگ، صدک {float(bwp.iloc[-1]):.0%}); منتظر کندل انفجاری")
+    if _sg[-1] == 0 and len(_sw) >= 3 and (_sw[-3:] != 0).any():
+        _b = int(_sw[-3:][_sw[-3:] != 0][-1])
+        ARM["sweep"] = (-_b, f"نقدینگی {'بالای سقف' if _b == -1 else 'زیر کف'} گرفته شد؛ منتظر کندل جابه‌جایی و شکست ساختار")
     if float(rsi.iloc[-1]) < 35: ARM["mom"] = (1, f"RSI روی {float(rsi.iloc[-1]):.0f} (اشباع فروش)؛ منتظر برگشت از ۳۰")
     elif float(rsi.iloc[-1]) > 65: ARM["mom"] = (-1, f"RSI روی {float(rsi.iloc[-1]):.0f} (اشباع خرید)؛ منتظر برگشت از ۷۰")
     if z is not None and abs(float(z.iloc[-1])) >= 1.5: ARM["pairs"] = (-int(np.sign(float(z.iloc[-1]))), f"Z نسبت جفت {float(z.iloc[-1]):+.1f}؛ منتظر عبور از ±۲")
@@ -3623,7 +3669,7 @@ def _wilson_lb(p, n, z=1.28):
     d = 1 + z * z / n; c0 = p + z * z / (2 * n); m = z * np.sqrt(max(p * (1 - p), 0) / n + z * z / (4 * n * n)); return float((c0 - m) / d)
 
 _LAB = {"v": None}
-LAB_VER = 3      # Ultimate: نسخهٔ منطق بک‌تست؛ کش قدیمی (ورود با کلوز و بدون کارمزد) خودکار کنار گذاشته می‌شود
+LAB_VER = 6      # Ultimate: نسخهٔ منطق بک‌تست؛ کش قدیمی (ورود با کلوز و بدون کارمزد) خودکار کنار گذاشته می‌شود
 _DEEP = [False]
 def _lab_days(): return STRAT_DAYS_ALL if (ALL_MODE and not _DEEP[0]) else STRAT_DAYS      # حالت ALL بک‌تست کوتاه‌تر
 def _min_n(): return STRAT_MIN_N if (not ALL_MODE or _DEEP[0]) else max(5, int(round(STRAT_MIN_N * STRAT_DAYS_ALL / max(1, STRAT_DAYS))))
@@ -3671,6 +3717,21 @@ def strat_score(L, k, ses):
             "n_oos": so["n"], "E_oos": so["E"], "wr_oos": so["wr"], "oos_ok": (None if so["n"] < OOS_MIN_N else bool(so["E"] > 0))}
 
 # ---------------- اسکن زنده و انتخاب ----------------
+_HT = {"k": None, "v": None}
+def htf_trend(d5=None):
+    """v25: جهت روز از روند چندتایم‌فریم: EMA20/50 روی ۱۵م (وزن ۰٫۵)، ۱س و ۴س (وزن ۱)؛ هر کدام ±۱ فقط وقتی EMA20 و EMA50 مرتب‌اند و قیمت بیرون EMA50 نیست. خروجی: (جهت -1/0/+1، امتیاز، متن)."""
+    d5 = DATA[0] if d5 is None else d5; key = (ASSET, d5.index[-1])
+    if _HT["k"] == key: return _HT["v"]
+    sc = 0.0; parts = []
+    for rule, w, nm in (("15min", 0.5, "۱۵م"), ("60min", 1.0, "۱س"), ("240min", 1.0, "۴س")):
+        try:
+            c = _rs(d5, rule).Close.dropna(); e20, e50 = float(ema(c, 20).iloc[-1]), float(ema(c, 50).iloc[-1]); px = float(c.iloc[-1])
+            t = 1 if (e20 > e50 and px > e50) else -1 if (e20 < e50 and px < e50) else 0
+        except Exception: t = 0
+        sc += w * t; parts.append(f"{nm}:{'↑' if t > 0 else '↓' if t < 0 else '→'}")
+    d = 1 if sc >= TREND_MIN_SCORE else -1 if sc <= -TREND_MIN_SCORE else 0
+    v = (d, sc, " ".join(parts)); _HT.update(k=key, v=v); return v
+
 def strat_scan(now, price):
     d5 = DATA[0]; pr = _pair_df() if SMT_PAIR.get(ASSET) else None
     EV, CTX, ARM, meta = _strat_signals(d5, pr); now_av = d5.index[-1] + pd.Timedelta("5min"); a = float(now.atr); ses = sess_now(); rows = []
@@ -3697,6 +3758,13 @@ def strat_scan(now, price):
             sd, tx = ARM[k]; r_.update(state="ARMING", side=sd, detail=tx)
         if r_["state"] == "IDLE": r_["detail"] = "شرط ورود فعلاً برقرار نیست."
         rows.append(r_)
+    if TREND_LOCK:      # v25: خلاف جهتِ روز = رد (در بازار بی‌جهت هر دو سمت آزاد است)
+        try:
+            td, ts_, tx = htf_trend(d5); meta["trend"] = (td, ts_, tx)
+            for r_ in rows:
+                if r_["run"] and r_["state"] in ("ACTIVE", "ARMING") and r_["side"] and td != 0 and r_["side"] != td:
+                    r_["state"] = "COUNTER"; r_["detail"] = f"خلاف جهتِ روز ({tx}، امتیاز {ts_:+.1f}) ← رد شد"
+        except Exception: pass
     return rows, meta
 
 def strat_select(now, price, pin=None):
@@ -3878,7 +3946,7 @@ def _exam_panel(E):
     ui(_note("نمونهٔ آزمون کوچک است، پس وزن اعضا فقط بین ۰٫۷۵ تا ۱٫۲۵ جابه‌جا می‌شود؛ نتیجه هر ۱۲ ساعت دوباره گرفته می‌شود. «ارزش افزوده» = جمع R تصمیم‌های TAKE منهای (تعداد TAKE × میانگین R همهٔ موقعیت‌ها).", "#7c4dff"))
 
 # ---------------- نمایش ----------------
-_SFA = {"ACTIVE": "فعال ✅", "LATE": "دیر شد", "BROKEN": "باطل شد", "STALE": "کهنه", "ARMING": "در حال شکل‌گیری", "IDLE": "منتظر", "INFO": "اطلاعاتی", "OFF": "خارج از ساعت", "NA": "ناموجود"}
+_SFA = {"COUNTER": "خلاف روند ⛔", "ACTIVE": "فعال ✅", "LATE": "دیر شد", "BROKEN": "باطل شد", "STALE": "کهنه", "ARMING": "در حال شکل‌گیری", "IDLE": "منتظر", "INFO": "اطلاعاتی", "OFF": "خارج از ساعت", "NA": "ناموجود"}
 def _strat_panel(S, side=0):
     if not S: return
     L = _LAB["v"]; ses = S["session"]; P = S.get("pick"); tiles = ""
@@ -4136,8 +4204,8 @@ def all_scan():
 
 
 for _k, _v in list(globals().items()):      # v24: تارگت و عمر سفارش در متن پرامپت‌ها هم از تنظیمات فعلی بیاید
-    if _k.isupper() and isinstance(_v, str) and ("1.5R" in _v or "30 minutes" in _v):
-        globals()[_k] = _v.replace("1.5R", f"{SAFE_R1:g}R").replace("30 minutes", f"{ORDER_TTL * 5} minutes")
+    if _k.isupper() and isinstance(_v, str) and ("1.5R" in _v or "30 minutes" in _v or "<<R1>>" in _v or "<<R2>>" in _v):
+        globals()[_k] = _v.replace("1.5R", f"{SAFE_R1:g}R").replace("30 minutes", f"{ORDER_TTL * 5} minutes").replace("<<R1>>", f"{SAFE_R1:g}").replace("<<R2>>", f"{SAFE_R2:g}")
 
 # ---------------- اجرا ----------------
 _notify_orig = notify
@@ -4175,9 +4243,15 @@ if ALL_MODE and _HEADLESS:
                 if t_ >= lim and x.get("asset") == w.get("a") and x.get("side") == w.get("side"): return True      # همان دارایی و جهت در بازهٔ خنک‌شدن = تکراری (حتی با استراتژی دیگر)
         except FileNotFoundError: pass
         return False
+    _TECH_AFTER = float(os.environ.get("TA_TECH_AFTER", "0.5") or 0.5)      # v26: بعد از این کسر از مهلت جست‌وجو، ستاپ «فقط تکنیکال» هم پذیرفته می‌شود (نبودنِ استراتژی کتابچه مانع نیست)
     def _accept(w, dup):
-        if dup or not w or w.get("tier", -1) < 2 or w.get("lv", 0) < _MIN_LV: return False
-        if USE_AGENTS and ALL_LLM_TOPK > 0 and _REQUIRE_GO and (w.get("llm") or {}).get("verdict") != "GO": return False
+        if dup or not w or w.get("tier", -1) < 0: return False
+        if (w.get("llm") or {}).get("verdict") == "NO": return False
+        strict = w.get("tier", -1) >= 2 and w.get("lv", 0) >= _MIN_LV
+        late = (time.time() - (_deadline - _SEARCH_MIN * 60)) >= _TECH_AFTER * _SEARCH_MIN * 60
+        tech = late and (w.get("tier", -1) >= 1 or float(w.get("rd") or 0.0) >= 0.5)
+        if not (strict or tech): return False
+        if USE_AGENTS and ALL_LLM_TOPK > 0 and _REQUIRE_GO and w.get("tier", -1) >= 1 and (w.get("llm") or {}).get("verdict") != "GO": return False
         return True
     _deadline = time.time() + _SEARCH_MIN * 60; _scans = 0; _final = False
     while True:
@@ -4186,7 +4260,7 @@ if ALL_MODE and _HEADLESS:
         except Exception as _e: _err = f"{type(_e).__name__}: {str(_e)[:120]}"
         if not _err:
             _dup = _is_dup(_w)
-            if _accept(_w, _dup): print(f"✅ ستاپ معتبر بعد از {_scans} اسکن پیدا شد (پلهٔ {_w.get('lv')})."); break
+            if _accept(_w, _dup): print(f"✅ موقعیت بعد از {_scans} اسکن پیدا شد (پلهٔ {_w.get('lv')}{'، فقط تکنیکال' if _w.get('tier', -1) < 2 else ''})."); break
             if _final and _w.get("tier", -1) >= 0 and not _dup: print("ℹ ستاپ معتبر پیدا نشد؛ بهترین گزینهٔ موجود با پرچم ریسک."); break
             print(f"ℹ اسکن {_scans}: ستاپ معتبر نیست{' (تکراری)' if _dup else ''}؛ {int(max(0, _deadline - time.time()) / 60)} دقیقه تا پایان جست‌وجو.")
         else: print(f"⚠ اسکن {_scans} خطا داد ({_err}).")
