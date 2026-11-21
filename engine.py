@@ -161,17 +161,136 @@ if LLM_PROVIDER != "rayegan":
     _LEVELS = ['minimal', 'low', 'medium', 'high']
 
     # ── ۱) کلید: Colab Secrets ← در غیر این صورت getpass. کلید هرگز چاپ یا ذخیرهٔ فایلی نمی‌شود ──
-    def _read_key():
-        k = os.environ.get('GOOGLE_API_KEY', '').strip().strip('"').strip("'")
-        if not k:
-            raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY را در GitHub Secrets بگذارید.')
-        return k
+    # ── چرخش کلیدها (v24): GOOGLE_API_KEY ← اگر خطای سهمیه/دسترسی داد ← GOOGLE_API_KEY_2 ← GOOGLE_API_KEY_3 ← دوباره اولی ──
+    # اگر هر سه کلید «پشت‌سرهم» شکست بخورند (یعنی بین‌شان هیچ تماس موفقی نبوده)، یک اعلان فوری به گوشی می‌رود تا کلید جدید اضافه کنید.
+    import threading as _th
+    _GK_NAMES = ['GOOGLE_API_KEY', 'GOOGLE_API_KEY_2', 'GOOGLE_API_KEY_3']
+    _GKEYS = []                                          # [(نام Secret، مقدار)] به همین ترتیب؛ خالی یا تکراری حذف می‌شود
+    for _n in _GK_NAMES:
+        _v = _rg_secret(_n)
+        if _v and _v not in [x[1] for x in _GKEYS]: _GKEYS.append((_n, _v))
+    if not _GKEYS:
+        raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY (و در صورت وجود GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3) را در GitHub Secrets بگذارید.')
+    _GK = {'i': 0, 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
 
-    os.environ['GOOGLE_API_KEY'] = _read_key()
+    class _NoModel(RuntimeError): pass                   # با این کلید هیچ مدل قابل‌استفاده‌ای نبود (سهمیه صفر/پر)
+
+    def _gk_name(): return _GKEYS[_GK['i']][0]
+
+    def _gk_apply():                                      # کلید فعلی را در محیط (و در نشست HTTP اگر هنوز زنده است) می‌نشاند
+        k = _GKEYS[_GK['i']][1]; os.environ['GOOGLE_API_KEY'] = k
+        try:
+            if '_S' in globals() and 'x-goog-api-key' in _S.headers: _S.headers['x-goog-api-key'] = k
+        except Exception: pass
+
+    def _gk_alert(reason):                                # همهٔ کلیدها پشت‌سرهم شکست خوردند ← یک اعلان فوری (فقط یک‌بار در هر اجرا)
+        if _GK['notified']: return
+        _GK['notified'] = True
+        title = '⛔ کلیدهای Gemini تمام شد'
+        body = (f"هر {len(_GKEYS)} کلید ({' ، '.join(n for n, _ in _GKEYS)}) پشت‌سرهم خطا دادند و تحلیل متوقف شد.\nآخرین خطا: {_scrub(reason)}\n"
+                "سهمیه پر شده یا کلید نامعتبر است؛ کلید جدید را در GitHub Secrets اضافه کنید (Settings ← Secrets and variables ← Actions).")
+        print('⛔ ' + body)
+        try:
+            tp = _rg_secret('NTFY_TOPIC')
+            if tp and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', tp):
+                requests.post('https://ntfy.sh/', json={'topic': tp, 'title': title, 'message': body[:1800], 'priority': 5, 'tags': ['rotating_light', 'key']}, timeout=10)
+            else: print('⚠ NTFY_TOPIC تنظیم نیست؛ اعلان گوشی نرفت.')
+        except Exception as e: print(f'⚠ اعلان کلید ارسال نشد ({type(e).__name__})')
+
+    def _gk_rotate(reason='', used=None):
+        """کلید فعلی خطای سهمیه/دسترسی داد ← کلید بعدی (۱→۲→۳→۱). True = کلید دیگری فعال شد (تماس را دوباره بزن)؛ False = چرخشی ممکن نیست یا همه پشت‌سرهم شکست خوردند."""
+        with _GK['lock']:
+            if len(_GKEYS) < 2 or _GK['exhausted']: return False
+            if used is not None and used != _GK['i']: return True          # نخ دیگری همین حالا چرخانده؛ دوباره با کلید تازه امتحان کن
+            _GK['streak'] += 1; old = _gk_name()
+            if _GK['streak'] >= len(_GKEYS):
+                _GK['exhausted'] = True; _gk_alert(f'{old}: {reason}'); return False
+            _GK['i'] = (_GK['i'] + 1) % len(_GKEYS); _gk_apply()
+            print(f"🔁 {old} جواب نداد ({_scrub(reason)[:90]}) ← رفتم سراغ {_gk_name()}")
+            return True
+
+    def _gk_ok():                                         # یک تماس موفق = زنجیرهٔ شکست‌ها صفر می‌شود
+        _GK['streak'] = 0; _GK['exhausted'] = False
+
+    def _gk_is_key_error(e):
+        """فقط خطاهای «کلید/سهمیه» باعث چرخش می‌شوند: 429، 401، 403 و 400 با پیام کلید نامعتبر. (خطای 5xx، Timeout و درخواست بد چرخش نمی‌دهند.)"""
+        code = next((getattr(e, a) for a in ('code', 'status_code') if isinstance(getattr(e, a, None), int)), None)
+        low = (type(e).__name__ + ' ' + str(e)).lower()
+        if code is None:
+            m = re.search(r'\b(400|401|403|429)\b', low[:400]); code = int(m.group(1)) if m else None
+        if code in (401, 403, 429): return True
+        if code == 400: return ('api key' in low or 'api_key' in low) and any(w in low for w in ('invalid', 'not valid', 'expired'))
+        return any(w in low for w in ('resource_exhausted', 'resourceexhausted', 'permission_denied', 'permissiondenied', 'unauthenticated', 'api_key_invalid', 'quota exceeded'))
+
+    def _gk_install_hooks():
+        """تماس‌های TradingAgents/LangChain وسط کار هم کلید را عوض می‌کنند: (الف) هدر کلید در هر درخواست httpx به Google با کلیدِ فعلی جایگزین می‌شود؛ (ب) متد _generate مدل با چرخش + تلاش دوباره پوشانده می‌شود."""
+        if len(_GKEYS) < 2: return
+        try:
+            import httpx
+            _all_keys = [x[1] for x in _GKEYS]
+            def _swap(req):
+                try:
+                    if req.url.host != 'generativelanguage.googleapis.com': return
+                    cur = _GKEYS[_GK['i']][1]
+                    if 'x-goog-api-key' in req.headers: req.headers['x-goog-api-key'] = cur
+                    elif req.url.params.get('key') in _all_keys: req.url = req.url.copy_with(params=req.url.params.set('key', cur))
+                except Exception: pass
+            if not getattr(httpx.Client.send, '_gk', False):
+                _os = httpx.Client.send
+                def _send(self, request, *a, **k): _swap(request); return _os(self, request, *a, **k)
+                _send._gk = True; httpx.Client.send = _send
+                _oas = httpx.AsyncClient.send
+                async def _asend(self, request, *a, **k): _swap(request); return await _oas(self, request, *a, **k)
+                _asend._gk = True; httpx.AsyncClient.send = _asend
+        except Exception as e: print(f'ℹ هوک httpx برای چرخش کلید نصب نشد ({type(e).__name__}); فقط چرخش در سطح مدل فعال است.')
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI as _C
+        except Exception as e:
+            print(f'ℹ چرخش کلید وسط تحلیل فعال نشد (langchain_google_genai در دسترس نیست: {type(e).__name__}).'); return
+        if getattr(_C, '_gk_patched', False): return
+        _og, _oag = _C._generate, getattr(_C, '_agenerate', None)
+
+        def _bound(self):                                 # این نمونه با کدام کلید ساخته شده؟ (برای نسخه‌هایی که کلید را درون کلاینت نگه می‌دارند)
+            try:
+                v = self.google_api_key.get_secret_value()
+                return next((i for i, x in enumerate(_GKEYS) if x[1] == v), None)
+            except Exception: return None
+
+        def _rebind(self):
+            try:
+                from pydantic import SecretStr
+                self.google_api_key = SecretStr(_GKEYS[_GK['i']][1])
+                f = getattr(self, 'validate_environment', None)
+                if callable(f): f()
+            except Exception: pass
+
+        def _gen(self, *a, **k):
+            while True:
+                used = _GK['i']
+                if _bound(self) not in (None, used): _rebind(self)
+                try:
+                    r = _og(self, *a, **k); _gk_ok(); return r
+                except Exception as e:
+                    if not _gk_is_key_error(e) or not _gk_rotate(f'{type(e).__name__}: {e}', used): raise
+        _C._generate = _gen
+        if _oag is not None:
+            async def _agen(self, *a, **k):
+                while True:
+                    used = _GK['i']
+                    if _bound(self) not in (None, used): _rebind(self)
+                    try:
+                        r = await _oag(self, *a, **k); _gk_ok(); return r
+                    except Exception as e:
+                        if not _gk_is_key_error(e) or not _gk_rotate(f'{type(e).__name__}: {e}', used): raise
+            _C._agenerate = _agen
+        _C._gk_patched = True
+
+    os.environ['GOOGLE_API_KEY'] = _GKEYS[0][1]
+    print(f"🔑 {len(_GKEYS)} کلید Gemini آماده است ({' ، '.join(n for n, _ in _GKEYS)})" + ("؛ با خطای سهمیه/دسترسی به‌ترتیب و چرخشی عوض می‌شوند." if len(_GKEYS) > 1 else "؛ برای چرخش GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3 را هم در Secrets و workflow بگذارید."))
     os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'google'
     os.environ['TRADINGAGENTS_MAX_DEBATE_ROUNDS'] = '2'
     os.environ['TRADINGAGENTS_MAX_RISK_ROUNDS'] = '1'
-    os.environ['TRADINGAGENTS_LLM_MAX_RETRIES'] = '5'
+    os.environ['TRADINGAGENTS_LLM_MAX_RETRIES'] = '3' if len(_GKEYS) > 1 else '5'      # با چند کلید، بعد از ۳ تلاش ناموفق همان کلید، چرخش انجام می‌شود (به‌جای ۵ تلاش)
 
     _S = requests.Session()
     _S.headers.update({'x-goog-api-key': os.environ['GOOGLE_API_KEY'], 'Content-Type': 'application/json'})   # کلید فقط در هدر است، نه در آدرس
@@ -181,9 +300,12 @@ if LLM_PROVIDER != "rayegan":
         def __init__(self, code, text): super().__init__(f"HTTP {code}"); self.code, self.text = code, text
 
     def _scrub(t):
-        k = os.environ.get('GOOGLE_API_KEY', '')
         t = str(t)
-        return (t.replace(k, '***') if k else t)[:240]
+        for k in [os.environ.get('GOOGLE_API_KEY', '')] + [x[1] for x in _GKEYS]:
+            if k: t = t.replace(k, '***')
+        return t[:240]
+
+    _gk_install_hooks()
 
     # ── ۲) فهرست واقعی مدل‌های همین کلید (یک درخواست GET؛ فقط در خطای شبکه/سرور یک بار دیگر) ──
     def _list_models():
@@ -263,7 +385,7 @@ if LLM_PROVIDER != "rayegan":
         try: st = _classify(_S.post(f"{_BASE}/models/{c['name']}:generateContent", json=body, timeout=(6, 25)))
         except requests.Timeout: st = 'TIMEOUT'
         except requests.RequestException: st = 'NETWORK'
-        _probe[k] = st; _log.append((c['name'], lvl, st))
+        _probe[k] = st; _log.append((c['name'] + (f' [{_gk_name()}]' if len(_GKEYS) > 1 else ''), lvl, st))
         if st == 'AUTH': raise _ApiError(401, 'API key rejected')
         return st
 
@@ -288,40 +410,46 @@ if LLM_PROVIDER != "rayegan":
         return soft or (None, None, None)                # اگر هیچ مدلی OK نبود، بهترین مدلِ «محدودیت لحظه‌ای» (نه «بدون دسترسی»)
 
     # ── ۶) اجرا: فهرست ← DEEP ← QUICK ──
-    try:
-        _all = _list_models()
-        _cands = _candidates(_all)
-        if not _cands: raise RuntimeError('هیچ مدل Gemini ≥ ۲٫۵ با پشتیبانی generateContent در این حساب پیدا نشد')
-        _byname = {c['name']: c for c in _cands}
+    for _kt in range(len(_GKEYS)):                      # هر دور = یک کلید؛ اگر کلید نشد، کلید بعدی (چرخشی)
+        _used = _GK['i']; _probe.clear(); _S.headers['x-goog-api-key'] = os.environ['GOOGLE_API_KEY']
+        try:
+            _all = _list_models()
+            _cands = _candidates(_all)
+            if not _cands: raise RuntimeError('هیچ مدل Gemini ≥ ۲٫۵ با پشتیبانی generateContent در این حساب پیدا نشد')
+            _byname = {c['name']: c for c in _cands}
 
-        _dc = sorted(_cands, key=lambda c: _rank(c, ['pro', 'flash', 'flash-lite']))                   # DEEP: قوی‌ترین رده (Pro) و جدیدترین نسل
-        if FORCE_DEEP:
-            if FORCE_DEEP in _byname: _dc = [_byname[FORCE_DEEP]]
-            else: _msg('#d99a00', f'⚠ FORCE_DEEP «{FORCE_DEEP}» در فهرست واقعی API نیست؛ نادیده گرفته شد.')
-        D, lvl, d_st = _choose(_dc, _ladder)
-        if not D: raise RuntimeError('هیچ مدل Deep قابل‌استفاده‌ای پیدا نشد (جزئیات در فهرست آزمایش‌ها)')
+            _dc = sorted(_cands, key=lambda c: _rank(c, ['pro', 'flash', 'flash-lite']))                   # DEEP: قوی‌ترین رده (Pro) و جدیدترین نسل
+            if FORCE_DEEP:
+                if FORCE_DEEP in _byname: _dc = [_byname[FORCE_DEEP]]
+                else: _msg('#d99a00', f'⚠ FORCE_DEEP «{FORCE_DEEP}» در فهرست واقعی API نیست؛ نادیده گرفته شد.')
+            D, lvl, d_st = _choose(_dc, _ladder)
+            if not D: raise _NoModel('هیچ مدل Deep قابل‌استفاده‌ای پیدا نشد (جزئیات در فهرست آزمایش‌ها)')
 
-        _qt = ['flash', 'flash-lite'] if D['tier'] == 'pro' else ['flash-lite', 'flash']               # QUICK: سریع‌تر و سبک‌تر از DEEP
-        _qc = sorted([c for c in _cands if c['name'] != D['name']], key=lambda c: _rank(c, _qt))
-        _qc = [c for c in _qc if c['tier'] in _qt]
-        if FORCE_QUICK:
-            if FORCE_QUICK in _byname: _qc = [_byname[FORCE_QUICK]]
-            else: _msg('#d99a00', f'⚠ FORCE_QUICK «{FORCE_QUICK}» در فهرست واقعی API نیست؛ نادیده گرفته شد.')
-        Q, _, q_st = _choose(_qc, lambda c: [lvl])                                                      # QUICK با همان سطح Thinking (متغیر محیطی یکی است)
-        if not Q: Q, q_st = D, d_st
-    except _ApiError as e:
-        if e.code in (400, 401, 403): _msg('#e5484d', f'❌ کلید پذیرفته نشد یا دسترسی ندارد ({e}). کلید را در aistudio.google.com بررسی کنید. {e.text[:160]}')
-        else: _msg('#e5484d', f'❌ پاسخ غیرمنتظرهٔ API ({e}): {e.text[:160]}')
-        raise RuntimeError('Gemini key/model check failed') from None
-    except RuntimeError as e:
-        _msg('#e5484d', f'❌ {e}')
-        raise RuntimeError(str(e)) from None
-    except Exception as e:
-        _msg('#e5484d', f'❌ چک کلید/مدل انجام نشد ({type(e).__name__})؛ اتصال را بررسی و سلول را دوباره اجرا کنید')
-        raise RuntimeError('Gemini connection/model check failed') from None
-    finally:
-        _S.headers.pop('x-goog-api-key', None)           # کلید از نشست HTTP پاک می‌شود؛ فقط متغیر محیطیِ موردنیاز TradingAgents می‌ماند
+            _qt = ['flash', 'flash-lite'] if D['tier'] == 'pro' else ['flash-lite', 'flash']               # QUICK: سریع‌تر و سبک‌تر از DEEP
+            _qc = sorted([c for c in _cands if c['name'] != D['name']], key=lambda c: _rank(c, _qt))
+            _qc = [c for c in _qc if c['tier'] in _qt]
+            if FORCE_QUICK:
+                if FORCE_QUICK in _byname: _qc = [_byname[FORCE_QUICK]]
+                else: _msg('#d99a00', f'⚠ FORCE_QUICK «{FORCE_QUICK}» در فهرست واقعی API نیست؛ نادیده گرفته شد.')
+            Q, _, q_st = _choose(_qc, lambda c: [lvl])                                                      # QUICK با همان سطح Thinking (متغیر محیطی یکی است)
+            if not Q: Q, q_st = D, d_st
+            break
+        except _ApiError as e:
+            if e.code in (400, 401, 403, 429) and _gk_rotate(f'HTTP {e.code}', _used): continue          # این کلید نشد ← کلید بعدی
+            if e.code in (400, 401, 403): _msg('#e5484d', f'❌ کلید پذیرفته نشد یا دسترسی ندارد ({e}). کلید را در aistudio.google.com بررسی کنید. {e.text[:160]}')
+            else: _msg('#e5484d', f'❌ پاسخ غیرمنتظرهٔ API ({e}): {e.text[:160]}')
+            raise RuntimeError('Gemini key/model check failed') from None
+        except RuntimeError as e:
+            if isinstance(e, _NoModel) and _gk_rotate(str(e), _used): continue          # این کلید مدل قابل‌استفاده نداشت ← کلید بعدی
+            _msg('#e5484d', f'❌ {e}')
+            raise RuntimeError(str(e)) from None
+        except Exception as e:
+            _msg('#e5484d', f'❌ چک کلید/مدل انجام نشد ({type(e).__name__})؛ اتصال را بررسی و سلول را دوباره اجرا کنید')
+            raise RuntimeError('Gemini connection/model check failed') from None
+        finally:
+            _S.headers.pop('x-goog-api-key', None)           # کلید از نشست HTTP پاک می‌شود؛ فقط متغیر محیطیِ موردنیاز TradingAgents می‌ماند
 
+    _gk_ok()                                              # انتخاب مدل با یکی از کلیدها موفق بود
     DEEP, QUICK, _lvl = D['name'], Q['name'], lvl
     os.environ['TRADINGAGENTS_DEEP_THINK_LLM'] = DEEP
     os.environ['TRADINGAGENTS_QUICK_THINK_LLM'] = QUICK
@@ -828,6 +956,7 @@ def run_agents():
         except Exception as e:
             errs.append(f"تلاش {k} ({day}): {type(e).__name__}: {str(e)[:350]}")
             print(f"⚠ {errs[-1][:260]}")
+            if globals().get("_GK", {}).get("exhausted"): raise RuntimeError("همهٔ کلیدهای Gemini پشت‌سرهم خطا دادند (اعلان به گوشی رفت؛ کلید جدید اضافه کنید) | " + " | ".join(errs))
             if use_cb and any(w in str(e).lower() for w in ("pickle", "lock", "callback", "deepcopy", "copy")):
                 use_cb = False; print("   مشکل از گزارش پیشرفت بود؛ بدون آن (فقط گزارش زمان) فوراً دوباره اجرا می‌شود ..."); continue
             if k < len(days):
