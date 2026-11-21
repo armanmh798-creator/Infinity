@@ -598,12 +598,12 @@ TZ_HOURS = 3.5                                # اختلاف ساعت شما ب�
 MAX_AGE_MIN = 25                              # داده قدیمی‌تر از این (دقیقه) = بازار بسته؛ سیگنال نمی‌دهد
 # ---- ورود، حد ضرر و تارگت ----
 SL_ATR = 0.8                                  # حد ضرر = این × ATR کندل ۱۵م
-MAX_ENTRY_DIST = 0.4                          # ورود حداکثر این × ATR از قیمت زنده
-MIN_PULL = 0.2                                # ورود حداقل این × ATR بهتر از قیمت (لیمیت واقعی)
-ORDER_TTL = 6                                 # اعتبار سفارش لیمیت (کندل ۵م)؛ پر نشد = لغو
+MAX_ENTRY_DIST = 1.0                          # ورود حداکثر این × ATR از قیمت زنده (v24: لیمیت می‌تواند کمی دورتر منتظر شکار بماند)
+MIN_PULL = 0.35                               # ورود حداقل این × ATR بهتر از قیمت (لیمیت واقعی؛ v24: عجولانه دنبال قیمت نمی‌رود)
+ORDER_TTL = 12                                # اعتبار سفارش لیمیت (کندل ۵م)؛ پر نشد = لغو (v24: ۶۰ دقیقه)
 MAX_HOLD = 24                                 # سقف نگه‌داری بعد از فیل (کندل ۵م)
 TP1_FRAC = 0.5                                # سهم حجمی که در TP1 بسته می‌شود
-SAFE_R1, SAFE_R2 = 1.5, 3.0                   # 🎯 کارت اصلی: TP1 و TP2 به واحد R
+SAFE_R1, SAFE_R2 = float(os.environ.get("TA_R1", "2") or 2), float(os.environ.get("TA_R2", "3") or 3)      # 🎯 کارت اصلی: TP1 = ۱:۲ و TP2 = ۱:۳ (v24؛ با TA_R1 و TA_R2 قابل‌تغییر)
 RUN_R1, RUN_R2 = 3.0, 5.0                     # 🚀 کارت رانر: TP1 و TP2 به واحد R
 MIN_RR = 3.0                                  # حداقل ریوارد تارگت نهایی
 BE_BUFFER_ATR = 0.1                           # بعد از TP1، SL بقیه این × ATR آن‌طرف‌تر از ورود
@@ -615,7 +615,8 @@ SL_MAX_MOVES = 1                              # حداکثر دفعات جابه
 ROUND_STEP = {"BTC": 1000, "ETH": 50, "DOGE": 0.005, "SHIB": 0.0000001, "EURUSD": 0.005, "GBPUSD": 0.005, "Gold": 10, "US30": 100, "NAS100": 100, "USOIL": 1.0}  # گام «عدد رند» هر دارایی
 SWEEP_LOOKBACK = 18                           # سوییپ‌های این‌قدر کندل ۵م اخیر بررسی می‌شوند
 KEEP_SIZE = True                              # True = حجم خودکار کم نمی‌شود (فقط پرچم می‌آید)
-RUNNER_ON = True                              # True = دو کارت: 🎯 اصلی و 🚀 رانر
+RUNNER_ON = False                             # v24: فقط یک کارت (همه پوزیشن‌ها ۱:۲ و ۱:۳)؛ True = کارت 🚀 رانر هم بیاید
+TREND_GATE = os.environ.get("TA_TREND_GATE", "1") != "0"      # v24: ترجیح با روندِ خط‌های روند (۱س، وگرنه ۱۵م): سیگنال خلاف روند رد نمی‌شود، فقط اطمینانش ۲ نمره کم می‌شود و در ریسک‌ها نوشته می‌شود
 # ---- اسپرد و کارمزد ----
 SPREAD_ON = True                              # جابه‌جایی SL/TP فروش با اسپرد
 SPREADS = {"Gold": 0.30, "USOIL": 0.06, "BTC": 0.0, "ETH": 0.0, "DOGE": 0.0, "EURUSD": 0.00010, "GBPUSD": 0.00012, "US30": 0.0, "NAS100": 0.0}  # اسپرد بروکر شما برای هر دارایی
@@ -796,7 +797,7 @@ ASSET_DESC = {"Gold": "Gold (XAUUSD spot; data = COMEX GC futures). Drivers: US 
               "TRX": "TRX (Tron; large-cap payments/DeFi chain)", "LINK": "LINK (Chainlink; oracle network token, high-beta altcoin)", "AVAX": "AVAX (Avalanche; high-beta large-cap L1)",
               "EURUSD": "EUR/USD (spot FX). Drivers: ECB vs Fed policy divergence, euro-area and US data, yields, DXY, risk sentiment. Most liquid 07-17 UTC.", "GBPUSD": "GBP/USD (spot FX). Drivers: BoE vs Fed policy divergence, UK CPI/jobs/GDP, yields, DXY, risk sentiment. Most liquid 07-17 UTC."}
 OHLC = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
-TP1_R, TP2_R = 1.5, 3.0   # ریوارد به ریسک: TP1 = ۱ به ۱٫۵ و TP2 = ۱ به ۳ (ثابت)
+TP1_R, TP2_R = SAFE_R1, SAFE_R2   # ریوارد به ریسک: از تنظیمات بالا (پیش‌فرض TP1 = ۱:۲ و TP2 = ۱:۳)
 SAFE_R2 = max(SAFE_R2, MIN_RR); RUN_R2 = max(RUN_R2, SAFE_R2)      # v11: ریوارد ۱ به ۳ قفل است
 utcnow = lambda: dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
@@ -1424,6 +1425,34 @@ def smart_stop(a, pools, d0, cap):
         d = nd; notes.append(f"🛡 SL پشت «{lab}» ({pd_:.2f} ATR از ورود) گذاشته شد، با بافر {SL_BUFFER_ATR:g} ATR تا شکار استاپ نخورد: ریسک {d:.2f} ATR")
     return d, notes, skipped
 
+def _tl_best(df_, piv, kind, a):
+    """v24: بهترین خط روندِ «نشکسته» از بین ۵ پیوت آخر. kind='L': خط حمایتِ صعودی از کف‌ها؛ kind='H': خط مقاومتِ نزولی از سقف‌ها.
+    شرط‌ها: حداقل ۴ کندل فاصله و ۰٫۳ ATR اختلاف بین دو لنگر، شیب هم‌جهت، و هیچ کندلی بعد از لنگر اول بیرون خط (بیش از ۰٫۱۵ ATR) نبسته باشد. برتری با تعداد لمس و تازگی."""
+    pts = piv[-5:]; best = None; cl = df_.Close.values; n = len(df_)
+    for x in range(len(pts)):
+        for y in range(x + 1, len(pts)):
+            (i1, p1), (i2, p2) = pts[x], pts[y]
+            if i2 - i1 < 4 or abs(p2 - p1) < 0.3 * a: continue
+            sl_ = (p2 - p1) / (i2 - i1)
+            if (kind == "L" and sl_ <= 0) or (kind == "H" and sl_ >= 0): continue
+            ln = p1 + sl_ * (np.arange(i1, n) - i1); seg = cl[i1:]
+            if int(((seg < ln - 0.15 * a) if kind == "L" else (seg > ln + 0.15 * a)).sum()) > 0: continue
+            touches = sum(1 for (i, p) in pts if i >= i1 and abs(p - (p1 + sl_ * (i - i1))) <= 0.25 * a)
+            cand = (touches, i2, {"p": float(p1 + sl_ * (n - 1 - i1)), "touches": int(touches), "slope": float(sl_ / a)})
+            if best is None or cand[:2] > best[:2]: best = cand
+    return best[2] if best else None
+
+def _trendlines(d5, a, price, side):
+    """v24: خط‌های روند ۱۵م و ۱س + جهت روند. against=True یعنی سیگنال خلاف روند است (مرجع: ۱س؛ اگر خط روند ۱س نداشت ۱۵م)."""
+    out = {"tf": {}, "bias": {}, "ref": 0, "against": False}
+    for nm, df_, k in (("15m", _rs(d5, "15min").tail(200), 3), ("1h", _rs(d5, "60min").tail(168), 2)):
+        ph, pl = _pivots(df_, k)
+        sup, res = _tl_best(df_, pl, "L", a), _tl_best(df_, ph, "H", a)
+        out["tf"][nm] = (sup, res); out["bias"][nm] = 1 if (sup and not res) else -1 if (res and not sup) else 0
+    out["ref"] = out["bias"]["1h"] or out["bias"]["15m"]
+    out["against"] = bool(out["ref"] and side and side == -out["ref"])
+    return out
+
 def smc_engine(d5, d1, a, price, side, extras=False):
     d5t = d5.tail(600); r15 = _rs(d5, "15min").tail(300); r1h = _rs(d5, "60min").tail(168); r4h = _rs(d5, "240min").tail(120); tol = 0.12 * a
     TFS = (("5m", d5t, _pivots(d5t, 3), pd.Timedelta("5min")), ("15m", r15, _pivots(r15, 3), pd.Timedelta("15min")), ("1h", r1h, _pivots(r1h, 2), pd.Timedelta("60min")), ("4h", r4h, _pivots(r4h, 2), pd.Timedelta("240min")))
@@ -1483,12 +1512,22 @@ def smc_engine(d5, d1, a, price, side, extras=False):
     S["px1h"] = float(c[-1] / c[-13] - 1) if len(c) > 13 else 0.0
     S["c5"] = [(t.strftime("%H:%M"), *map(float, r)) for t, r in zip(d5t.index[-12:], d5t[["Open", "High", "Low", "Close"]].values[-12:])]
     S["c15"] = [(t.strftime("%H:%M"), *map(float, r)) for t, r in zip(r15.index[-8:], r15[["Open", "High", "Low", "Close"]].values[-8:])]
+    try: S["tl"] = _trendlines(d5, a, price, side)
+    except Exception: S["tl"] = None
     return S
 
 def _smc_report(S):
     P, a, f = S["price"], S["a"], (lambda x: f"{x:,.{PXD}f}"); L = [f"ASSET {ASSET} | live {f(P)} | ATR15m {a:.{PXD}f} ({a / P * 100:.2f}% of price) | session (NY time): {S['session']}"]
     for tf in ("5m", "15m", "1h", "4h"):
         sh, sl_ = S["swing"][tf]; L.append(f"STRUCTURE {tf}: {S['trend'][tf][1]} | last swing high {f(sh) if sh else '-'} | last swing low {f(sl_) if sl_ else '-'}")
+    _tl = S.get("tl")
+    if _tl:
+        for nm in ("15m", "1h"):
+            sup, res = _tl["tf"][nm]; pt = []
+            if sup: pt.append(f"rising SUPPORT trendline now at {f(sup['p'])} (price {(P - sup['p']) / a:+.2f} ATR from it, {sup['touches']} touches)")
+            if res: pt.append(f"falling RESISTANCE trendline now at {f(res['p'])} (price {(P - res['p']) / a:+.2f} ATR from it, {res['touches']} touches)")
+            L.append(f"TRENDLINES {nm} (unbroken, through swing pivots): " + (" | ".join(pt) if pt else "none valid (range, triangle or broken line)"))
+        _rf = _tl["ref"]; L.append("TREND BIAS from trendlines: " + ("BULLISH" if _rf == 1 else "BEARISH" if _rf == -1 else "neutral") + (f" | the proposed {'LONG' if S['side'] == 1 else 'SHORT'} is {'AGAINST' if _tl['against'] else 'WITH'} the trendline trend" if _rf else ""))
     for nm in ("15m", "1h"):
         lo_, hi_, ps = S["range" + nm]; L.append(f"DEALING RANGE {nm} ({'12h' if nm == '15m' else '24h'}): low {f(lo_)} high {f(hi_)} | price at {ps:.0%} of range (0%=discount low, 100%=premium high)")
     if S["opens"]: L.append("REFERENCE OPENS (price vs open, ATR): " + " | ".join(f"{n} {f(p_)} ({d_:+.2f})" for n, p_, d_ in S["opens"]))
@@ -1527,6 +1566,8 @@ Two real failures to avoid:
 2) A stop resting just beyond an obvious liquidity pool (equal highs/lows, range extreme, day/week/session high or low) that gets swept in a V-shaped stop run, after which price returns to the original direction.
 
 Pattern that has worked in recent live setups (mirror it for longs): with the 1h/4h structure and most timeframes aligned, a limit order at a premium (short) or discount (long) array or at a retest of a lower high / higher low, the stop BEYOND the swept liquidity or swing, targets 1.5R and 3R toward unswept liquidity on the other side. Treat it as a pattern to recognise, not as a reason to say GO without evidence.
+
+TRENDLINE RULE (owner's hard rule): trade WITH the trendline trend. The report lists unbroken TRENDLINES and a TREND BIAS line. Strongly prefer a GO in the direction of the 1h trendline trend (or the 15m one when 1h has none): in a trending day trade with the trend and wait for it instead of fading it. The best entries are the first or second RETEST of a rising support (long) or a falling resistance (short), ideally inside an unmitigated FVG/OB there, after a sweep of the liquidity just beyond the line. The stop goes BEYOND that liquidity pool, never just under/over the trendline itself (the line is exactly where the crowd puts its stop). A counter-trend idea is NOT forbidden, but it is the exception: allow it only with a complete A+ sequence (sweep -> displacement -> MSS) at a major pool, give it a clearly lower confidence (at least 2 points less) and say so in risks; otherwise prefer WAIT and name the trigger (a confirmed break and retest of the line, or a pullback to the trendline in the trend direction). Win rate matters more than frequency: a limit order waiting a little away from the live price at the retest zone is welcome, never chase price.
 
 Use ONLY the data below. The data contains a mandatory RSI line and a CROWD STOP MAP: you MUST say in your summary or risks whether RSI (5m/15m/1h and any divergence) supports or contradicts the entry (RSI stretched in the trade direction, or a divergence against it, is a RISK to flag, not a veto), and the stop you recommend MUST sit beyond the nearest crowd-stop pool with a buffer, never inside or at a pool and never exactly on a round number. Never invent prices or data; refer to levels by their IDs (H1, L2, F1, O1, I1 ...). If a data block says "no data", say so and judge without it.
 
@@ -1610,6 +1651,10 @@ def smc_prepare(pr=None):
             except Exception as e:
                 last = f"{type(e).__name__}: {str(e)[:200]}"; j = None; print(f"⚠ ایجنت ICT/SMC تلاش {k + 1}: {last}"); time.sleep(5)
         if j is None: AG["smc_err"] = last; return
+        if TREND_GATE and (S.get("tl") or {}).get("against") and str(j.get("verdict", "")).upper() == "GO":      # v24: خلاف خط روند رد نمی‌شود؛ فقط اطمینانش کم می‌شود (ستاپ هم‌جهت با روند در رتبه‌بندی جلوتر می‌ماند)
+            try: j["confidence"] = max(1, int(float(j.get("confidence", 5))) - 2)
+            except Exception: pass
+            j["risks"] = ("⚠ خلاف روند خط‌های روند است. " + str(j.get("risks") or ""))[:300]
         ids = S["ids"]; res = {"verdict": str(j["verdict"]).upper(), "confidence": j.get("confidence", "?"), "confluence": j.get("confluence", "?"), "schools": j.get("schools") or {},
                                "trigger": str(j.get("trigger") or ""), "risks": str(j.get("risks") or ""), "summary": str(j.get("summary") or ""),
                                "sl_price": None, "entry_price": None, "report": rep, "t": utcnow()}
@@ -4090,6 +4135,10 @@ def all_scan():
     print(f"✅ ALL ← {w['a']} انتخاب شد ({_ALL['mode']}). حالا تحلیل کامل روی همین دارایی اجرا می‌شود.")
 
 
+for _k, _v in list(globals().items()):      # v24: تارگت و عمر سفارش در متن پرامپت‌ها هم از تنظیمات فعلی بیاید
+    if _k.isupper() and isinstance(_v, str) and ("1.5R" in _v or "30 minutes" in _v):
+        globals()[_k] = _v.replace("1.5R", f"{SAFE_R1:g}R").replace("30 minutes", f"{ORDER_TTL * 5} minutes")
+
 # ---------------- اجرا ----------------
 _notify_orig = notify
 def notify(title, msg, prio=3, tags="", delay=None, seq=None):      # GitHub: پیام‌های «شروع/میانه» نمی‌روند؛ فقط سیگنال و خطا
@@ -4100,6 +4149,20 @@ t0 = time.time(); _run_start = utcnow().isoformat(timespec="seconds")
 if not _topic(): print("⚠ اعلان گوشی خاموش است" + (f" ({_NTFY['why']})" if _NTFY["why"] else "") + ". برای راه‌اندازی در یک خط: notify_test() را اجرا کنید؛ مراحل را دقیق می‌گوید.")
 if _HEADLESS and not ALL_MODE:      # تک‌دارایی هم با همان حلقهٔ جست‌وجو
     ALL_MODE = True; ALL_ASSETS = [ASSET]
+if _HEADLESS:      # v24: سهمیهٔ ساعتی؛ حداکثر TA_MAX_PER_HOUR سیگنال در ۶۰ دقیقه، و اگر این ساعتِ تقویمی هنوز سیگنالی نبوده، در آخرین نوبت (دقیقهٔ ۴۰ به بعد) بهترین گزینهٔ موجود پذیرفته می‌شود
+    _MAX_HR = max(1, int(os.environ.get("TA_MAX_PER_HOUR", "3") or 3)); _MIN_HR = max(0, int(os.environ.get("TA_MIN_PER_HOUR", "1") or 1))
+    _now_u = utcnow(); _n60 = _n_cur = 0
+    try:
+        for _ln in open(SIG_LOG_PATH, encoding="utf-8"):
+            try: _x = json.loads(_ln); _t = dt.datetime.fromisoformat(str(_x["t"])[:19])
+            except Exception: continue
+            if _t >= _now_u - dt.timedelta(minutes=60): _n60 += 1
+            if _t >= _now_u.replace(minute=0, second=0, microsecond=0): _n_cur += 1
+    except FileNotFoundError: pass
+    if _n60 >= _MAX_HR:
+        print(f"⏸ سقف ساعتی پر است ({_n60} از {_MAX_HR} سیگنال در ۶۰ دقیقهٔ اخیر)؛ این نوبت سیگنال نمی‌دهد."); raise _HeadlessStop("hourly-quota")
+    if _n_cur < _MIN_HR and _now_u.minute >= 40 and not _FINAL_FALLBACK:
+        _FINAL_FALLBACK = True; print(f"⏰ این ساعت هنوز سیگنالی نرفته ({_n_cur} از حداقل {_MIN_HR}) و این آخرین نوبت است؛ اگر ستاپ کامل پیدا نشود بهترین گزینهٔ موجود (با پرچم ریسک) داده می‌شود.")
 if ALL_MODE and _HEADLESS:
     # GitHub: تا پیدا شدن ستاپِ معتبر همهٔ دارایی‌ها را دوباره و دوباره می‌گردد. «معتبر» یعنی: ستاپ فعال + بک‌تست کامل ۵۸ روزه + پلهٔ اطمینان ≥ _MIN_LV
     # + (وقتی تیم مدلی روشن است) تأیید صریح مدیرعامل (GO). سیگنال کم‌اطمینان فقط با TA_FINAL_FALLBACK=1 داده می‌شود.
