@@ -8,10 +8,10 @@ on:
         description: "ALL یا یک دارایی (BTC, ETH, Gold, ...)"
         default: "ALL"
       agents:
-        description: "1 = تیم کامل | 0 = فقط تکنیکال"
+        description: "1 = فقط تکنیکال | 0 = تیم کامل"
         default: "1"
       search_min:
-        description: "حداکثر دقیقهٔ جست‌وجو"
+        description: "حداکثر دقیقه جستجو"
         default: "55"
       min_lv:
         description: "حداقل پلهٔ اطمینان: 4 = ۱:۳ کامل | 3 = فضای ≥۸۵٪ (پیش‌فرض)"
@@ -41,6 +41,8 @@ jobs:
       - run: python run.py
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TA_ASSET: ${{ github.event.inputs.asset || 'ALL' }}
           TA_AGENTS: ${{ github.event.inputs.agents || '1' }}
