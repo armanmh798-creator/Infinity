@@ -11,6 +11,7 @@ DATA = os.environ.get("TA_DATA") or os.path.join(HERE, "data")
 os.makedirs(DATA, exist_ok=True)
 os.environ.setdefault("TA_REPO_DIR", os.path.join(HERE, "TradingAgents"))
 LOGP = os.path.join(tempfile.gettempdir(), "ta_last_run.log")
+RUN_STARTED = time.time()
 
 
 class _Tee:
@@ -32,6 +33,40 @@ sys.stdout = sys.stderr = _Tee()
 
 def say(m):
     _REAL.write(str(m) + "\n"); _REAL.flush()
+
+
+def _ntfy(title, message, priority=3, tags=None):
+    """ارسال اعلان مستقل شروع/پایان؛ NTFY_TOPIC باید فقط نام topic باشد."""
+    topic = os.environ.get("NTFY_TOPIC", "").strip().replace("https://ntfy.sh/", "").strip("/")
+    if not topic:
+        say("⚠ NTFY_TOPIC تنظیم نشده؛ اعلان ارسال نشد.")
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", topic):
+        say("⚠ مقدار NTFY_TOPIC نامعتبر است؛ فقط نام topic را بدون URL وارد کنید.")
+        return False
+    try:
+        import requests
+        r = requests.post(
+            f"https://ntfy.sh/{topic}",
+            data=str(message).encode("utf-8"),
+            headers={"Title": str(title)[:100], "Priority": str(priority), "Tags": ",".join(tags or [])},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        say(f"⚠ ارسال اعلان ntfy ناموفق بود: {type(e).__name__}")
+        return False
+
+
+def _journal_count():
+    """تعداد رکوردهای ژورنال سیگنال؛ فقط برای گزارش، نه تصمیم معاملاتی."""
+    path = os.path.join(DATA, "scalp_journal_signals.jsonl")
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return sum(1 for line in f if line.strip())
+    except Exception:
+        return 0
 
 
 def _scrub(t):
@@ -106,11 +141,14 @@ G = {"__name__": "ta_engine", "__file__": ENGINE, "_HEADLESS": True, "_DATA": DA
      "_RESCAN_SEC": float(os.environ.get("TA_RESCAN_SEC", "240") or 240),        # فاصلهٔ اسکن‌های پشت‌سرهم
      "_FINAL_FALLBACK": os.environ.get("TA_FINAL_FALLBACK", "0") == "1",         # پایان مهلت: بهترین گزینه با پرچم ریسک. پیش‌فرض خاموش (برای معاملهٔ خودکار: بی‌سیگنال بهتر از سیگنال ضعیف)
      "_MIN_LV": int(os.environ.get("TA_MIN_LV", "3") or 3),                      # حداقل پلهٔ اطمینان: ۴ = ۱:۳ کامل | ۳ = فضای ≥۸۵٪ ۱:۳ (پایین‌تر از ۳ هرگز نمی‌پذیرد)
-     "_REQUIRE_GO": os.environ.get("TA_REQUIRE_GO", "1") != "0",                 # مدیرعامل باید صریحاً GO بگوید (WAIT/NO/بی‌پاسخ = سیگنال نیست)
+     "_REQUIRE_GO": False,                 # شرط GO مدیرعامل حذف شد؛ تصمیم نهایی همچنان تابع فیلترهای موتور است
      "_WR_W": float(os.environ.get("TA_WR_W", "1.0") or 1.0)}                    # وزن اضافهٔ حد پایین وین‌ریت در رتبه‌بندی
 
+os.environ.setdefault("TA_AGENTS", "0")  # پیش‌فرض: تیم کامل ایجنت‌ها، نه فقط تحلیل تکنیکال
 rc, status = 0, "ok"
 t0 = time.time()
+_before_signals = _journal_count()
+_ntfy("🟢 شروع اسکن Infinity", f"اسکن جدید شروع شد. دارایی: {os.environ.get('TA_ASSET', 'ALL')} | زمان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t0))}", 3, ["rocket"])
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
 if not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3")): say("⚠ هر سه کلید GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
 else:
@@ -125,6 +163,28 @@ else:
         try: sys.stdout.flush(); log_tail = open(LOGP, encoding="utf-8", errors="ignore").read()[-700:]
         except Exception: log_tail = ""
         _fail_notify("❌ اجرای GitHub خطا داد", tail + "\n---\n" + log_tail)
-say(f"TradingAgents: {status} · {(time.time() - t0) / 60:.1f} دقیقه")
+duration = (time.time() - t0) / 60
+_after_signals = _journal_count()
+_new_signals = max(0, _after_signals - _before_signals)
+summary = (f"وضعیت: {status}\nمدت اجرا: {duration:.1f} دقیقه\n"
+           f"دارایی درخواستی: {os.environ.get('TA_ASSET', 'ALL')}\n"
+           f"رکورد سیگنال جدید در ژورنال: {_new_signals}\n"
+           f"زمان پایان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())}")
+# گزارش متنیِ قابل دریافت به‌عنوان Artifact در پایان هر اجرا
+try:
+    os.makedirs(DATA, exist_ok=True)
+    report_path = os.path.join(DATA, "last_run_report.txt")
+    with open(report_path, "w", encoding="utf-8") as rf:
+        rf.write(summary + "\n\n--- LOG ---\n")
+        try:
+            sys.stdout.flush()
+            rf.write(open(LOGP, encoding="utf-8", errors="ignore").read())
+        except Exception:
+            pass
+except Exception as e:
+    say(f"⚠ ذخیره گزارش ناموفق بود: {type(e).__name__}")
+
+say(f"TradingAgents: {status} · {duration:.1f} دقیقه · سیگنال جدید: {_new_signals}")
+_ntfy("✅ پایان اسکن Infinity" if rc == 0 else "❌ پایان اسکن با خطا", summary, 4 if rc else 3, ["white_check_mark"] if rc == 0 else ["warning"])
 sys.stdout.flush()
 os._exit(rc)      # نخ‌های پس‌زمینه بسته شوند؛ Actions منتظر نماند
