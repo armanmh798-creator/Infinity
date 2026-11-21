@@ -1,24 +1,21 @@
 name: TradingAgents
 on:
   schedule:
-    - cron: "7 * * * *"
+    - cron: "7 * * * *" # هر ساعت، دقیقه ۷ (UTC)
   workflow_dispatch:
     inputs:
       asset:
-        description: "ALL یا یک دارایی (BTC, ETH, Gold, ...)"
+        description: "ALL یا یک/چند دارایی (مثلاً BTC یا BTC,ETH)"
+        required: false
         default: "ALL"
-      agents:
-        description: "1 = فقط تکنیکال | 0 = تیم کامل"
-        default: "1"
       search_min:
         description: "حداکثر دقیقه جستجو"
+        required: false
         default: "55"
       min_lv:
-        description: "حداقل پلهٔ اطمینان: 4 = ۱:۳ کامل | 3 = فضای ≥۸۵٪ (پیش‌فرض)"
+        description: "حداقل پله اطمینان (۳ یا ۴)"
+        required: false
         default: "3"
-      require_go:
-        description: "1 = مدیرعامل باید GO بگوید (پیش‌فرض) | 0 = بدون این شرط"
-        default: "1"
 concurrency:
   group: tradingagents
   cancel-in-progress: false
@@ -38,19 +35,27 @@ jobs:
           restore-keys: ta-data-
       - run: git clone -q --depth 1 https://github.com/TauricResearch/TradingAgents
       - run: pip install -q ./TradingAgents yfinance requests pandas numpy
-      - run: python run.py
+      - name: Run Infinity scan
+        run: python run.py
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          TA_ASSET: ${{ github.event.inputs.asset || 'ALL' }}
-          TA_AGENTS: ${{ github.event.inputs.agents || '1' }}
+          TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'ALL' }}
+          TA_AGENTS: "0"
           TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '55' }}
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
-          TA_REQUIRE_GO: ${{ github.event.inputs.require_go || '1' }}
+          TA_REQUIRE_GO: "0"
           TA_FINAL_FALLBACK: "0"
           TA_DATA: ${{ github.workspace }}/data
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: infinity-report-${{ github.run_id }}
+          path: data/
+          if-no-files-found: warn
+          retention-days: 30
       - uses: actions/cache/save@v4
         if: always()
         with:
