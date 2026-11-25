@@ -72,6 +72,13 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
+          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
+          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
+          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
+          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
+          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
@@ -79,7 +86,7 @@ jobs:
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
           TA_REQUIRE_GO: "0"
           TA_FINAL_FALLBACK: "1"   # پایان مهلت: بهترین گزینه با پرچم ریسک فرستاده می‌شود (همیشه سیگنال)
-          TA_AGENT_MIN: "12"       # سقف زمان تیم ایجنت‌ها (تحلیل کامل ۶ تا ۱۲ دقیقه طول می‌کشد؛ ۷ کم بود)
+          TA_AGENT_MIN: "20"       # سقف زمان تیم ایجنت‌ها (قبلاً ۷ بود؛ خود تیم ۶ تا ۱۲ دقیقه + تلاش مجدد ۴۲۹ لازم دارد، پس همیشه قطع می‌شد)
           TA_LLM_TOPK: "0"         # ایجنت‌ها وسط جست‌وجو دروازه‌بان نیستند
           TA_MIN_PER_HOUR: "0"
           TA_TECH_AFTER: "0.5"     # بعد از نیمهٔ مهلت، ستاپ تکنیکالِ خوب هم پذیرفته می‌شود
@@ -88,7 +95,6 @@ jobs:
           TA_MAX_PER_HOUR: "999"
           TA_SPOT_ADJ: ${{ vars.TA_SPOT_ADJ || '0' }}      # اختلاف بروکر شما با منبع عمومی؛ در Settings→Variables بگذارید
           TA_COOLDOWN_H: ${{ github.event_name == 'workflow_dispatch' && '0' || vars.TA_COOLDOWN_H || '1' }}
-          TA_SPOT_PRIMARY: "Swissquote"   # منبع اصلی قیمت لحظه‌ای؛ فقط اگر نیامد بقیه منابع
           TA_LIVE_SEC: "30"        # قبل از ارسال، ۳۰ ثانیه قیمت زنده آپدیت می‌شود و سیگنال با آخرین قیمت فرستاده می‌شود
           TA_DATA: ${{ github.workspace }}/data
       - uses: actions/upload-artifact@v7
