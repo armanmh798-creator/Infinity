@@ -28,7 +28,7 @@ on:
         required: false
         default: "1"
 concurrency:
-  group: tradingagents
+  group: ${{ github.event_name == 'workflow_dispatch' && 'tradingagents-manual' || 'tradingagents' }}      # اجرای دستی صف جدا دارد تا پشت ماشه‌های ۵دقیقه‌ای نماند یا جایش را نگیرند
   cancel-in-progress: false
 jobs:
   scan:
@@ -86,6 +86,7 @@ jobs:
           # سقف ساعتی برداشته شد: هر نوبت تا ۶۰ دقیقه می‌گردد، سیگنال پیدا شد فرستاده می‌شود و نوبت بعد ≤ ۵ دقیقه بعد شروع می‌شود.
           # کولداون فقط جلوی ارسالِ دوبارهٔ «همان دارایی و همان جهت» را می‌گیرد؛ دستی = بدون کولداون. (برای تغییر: Variable با نام TA_COOLDOWN_H)
           TA_MAX_PER_HOUR: "999"
+          TA_SPOT_ADJ: ${{ vars.TA_SPOT_ADJ || '0' }}      # اختلاف بروکر شما با منبع عمومی؛ در Settings→Variables بگذارید
           TA_COOLDOWN_H: ${{ github.event_name == 'workflow_dispatch' && '0' || vars.TA_COOLDOWN_H || '1' }}
           TA_LIVE_SEC: "30"        # قبل از ارسال، ۳۰ ثانیه قیمت زنده آپدیت می‌شود و سیگنال با آخرین قیمت فرستاده می‌شود
           TA_DATA: ${{ github.workspace }}/data
