@@ -590,7 +590,7 @@ except Exception:
 
 # ================= تنظیمات (فقط همین بخش را عوض کنید) =================
 # ---- دارایی و حالت اجرا ----
-ASSET = os.environ.get("TA_ASSET", "ALL") or "ALL"
+ASSET = os.environ.get("TA_ASSET", "Gold") or "Gold"
 ALL_ASSETS = ["BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX", "EURUSD", "GBPUSD", "Gold", "US30", "NAS100", "USOIL"]  # دارایی‌هایی که ALL اسکن می‌کند؛ هر کدام را نمی‌خواهید حذف کنید
 USE_AGENTS = os.environ.get("TA_AGENTS", "1") != "0"
 MODE = "bold"                                 # careful | balanced | bold (جرأت بیشتر در ورود)
