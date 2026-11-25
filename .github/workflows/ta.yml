@@ -1,7 +1,7 @@
 name: TradingAgents
 on:
   schedule:
-    - cron: "7 * * * *" # هر ساعت، دقیقه ۷ (UTC)
+    - cron: "7 * * * *" # هر ساعت، دقیقه ۷ (UTC) = دقیقه ۳۷ به وقت تهران
   workflow_dispatch:
     inputs:
       asset:
@@ -11,18 +11,24 @@ on:
       search_min:
         description: "حداکثر دقیقه جستجو"
         required: false
-        default: "55"
+        default: "30"
       min_lv:
         description: "حداقل پله اطمینان (۳ یا ۴)"
         required: false
         default: "3"
+      agents:
+        description: "تیم ایجنت‌های مدلی: 0 = خاموش | 1 = روشن (پیش‌فرض؛ فقط مشاور است و سقف زمان دارد)"
+        required: false
+        default: "1"
 concurrency:
   group: tradingagents
   cancel-in-progress: false
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 90
+    env:
+      TA_AGENTS: ${{ github.event.inputs.agents || vars.TA_AGENTS_DEFAULT || '1' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,39 +39,43 @@ jobs:
           path: data
           key: ta-data-${{ github.run_id }}
           restore-keys: ta-data-
-      - name: Clone and install TradingAgents
+      - name: Install dependencies
         run: |
           set -e
-          # شاخهٔ main ریپوی اصلی دیگر پایتون نیست (پروژهٔ Node/TypeScript شده)؛ نسخهٔ پایتونیِ تگ‌شده را می‌گیریم.
-          OK=0
-          for REF in v0.3.1 v0.3.0 v0.2.5; do
-            rm -rf TradingAgents
-            if git clone -q --depth 1 --branch "$REF" https://github.com/TauricResearch/TradingAgents TradingAgents; then
-              if [ -f TradingAgents/pyproject.toml ] || [ -f TradingAgents/setup.py ]; then
-                echo "using TradingAgents $REF"; OK=1; break
+          mkdir -p TradingAgents
+          pip install -q --disable-pip-version-check yfinance requests pandas numpy
+          if [ "$TA_AGENTS" != "0" ]; then
+            # فقط برای حالت ایجنت: نسخهٔ پایتونیِ تگ‌شده (شاخهٔ main ریپوی اصلی دیگر پایتون نیست)
+            OK=0
+            for REF in v0.3.1 v0.3.0 v0.2.5; do
+              rm -rf TradingAgents
+              if git clone -q --depth 1 --branch "$REF" https://github.com/TauricResearch/TradingAgents TradingAgents; then
+                if [ -f TradingAgents/pyproject.toml ] || [ -f TradingAgents/setup.py ]; then
+                  echo "using TradingAgents $REF"; OK=1; break
+                fi
               fi
-            fi
-          done
-          if [ "$OK" != "1" ]; then echo "no python TradingAgents tag found"; ls TradingAgents || true; exit 1; fi
-          pip install -q ./TradingAgents
-          pip install -q yfinance requests pandas numpy
-          echo "PYTHONPATH=$GITHUB_WORKSPACE/TradingAgents" >> "$GITHUB_ENV"
-          PYTHONPATH="$GITHUB_WORKSPACE/TradingAgents" python -c "import tradingagents; print('tradingagents OK')"
+            done
+            if [ "$OK" != "1" ]; then echo "no python TradingAgents tag found"; exit 1; fi
+            pip install -q --disable-pip-version-check ./TradingAgents
+            echo "PYTHONPATH=$GITHUB_WORKSPACE/TradingAgents" >> "$GITHUB_ENV"
+          fi
       - name: Run Infinity scan
         run: python run.py
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
-          TA_AGENTS: "1"
-          TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '55' }}
+          TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '30' }}
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
           TA_REQUIRE_GO: "0"
-          TA_FINAL_FALLBACK: "0"
+          TA_FINAL_FALLBACK: "1"   # پایان مهلت: بهترین گزینه با پرچم ریسک فرستاده می‌شود (همیشه سیگنال)
+          TA_AGENT_MIN: "7"        # سقف زمان تیم ایجنت‌ها؛ بیشتر شد بدون ایجنت ادامه می‌دهد
+          TA_LLM_TOPK: "0"         # ایجنت‌ها وسط جست‌وجو دروازه‌بان نیستند
           TA_MIN_PER_HOUR: "0"
-          TA_TECH_AFTER: "2"
+          TA_TECH_AFTER: "0.5"     # بعد از نیمهٔ مهلت، ستاپ تکنیکالِ خوب هم پذیرفته می‌شود
           TA_COOLDOWN_H: "1"
           TA_DATA: ${{ github.workspace }}/data
       - uses: actions/upload-artifact@v4
@@ -74,7 +84,7 @@ jobs:
           name: infinity-report-${{ github.run_id }}
           path: data/
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 14
       - uses: actions/cache/save@v4
         if: always()
         with:
