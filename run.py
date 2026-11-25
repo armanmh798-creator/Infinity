@@ -163,7 +163,44 @@ G = {"__name__": "ta_engine", "__file__": ENGINE, "_HEADLESS": True, "_DATA": DA
      "_REQUIRE_GO": False,                 # شرط GO مدیرعامل حذف شد؛ تصمیم نهایی همچنان تابع فیلترهای موتور است
      "_WR_W": float(os.environ.get("TA_WR_W", "1.0") or 1.0)}                    # وزن اضافهٔ حد پایین وین‌ریت در رتبه‌بندی
 
-os.environ.setdefault("TA_AGENTS", "1")  # پیش‌فرض: تیم کامل ایجنت‌ها (فیلتر دقیق‌تر)
+
+# ---------- خلاصهٔ آموزش‌های ۳ فایل (به ایجنت‌ها داده می‌شود؛ فقط مشاوره، بدون اختیار حذف سیگنال) ----------
+_KNOW = """BACKGROUND PRINCIPLES (from the desk's training dossiers; use as judgement guidance, do not quote, do not change the required output format):
+1. Win rate alone proves nothing. Expectancy = WR*avgWin - LR*avgLoss, net of spread/slippage/commission; profit factor must be >1. With 1:3 reward:risk break-even win rate is about 25% BEFORE costs; costs push the real threshold higher, and a high win rate with big losers still loses.
+2. Match the strategy to the regime. Range/mean-reversion (RSI<30/>70, Bollinger edge, ADX low) works in a range and gets run over in a strong trend. Trend pullbacks (price vs EMA50/200, RSI dips toward 40-50 in an uptrend, mirror in a downtrend) have a medium win rate but larger R. Breakouts have frequent false breaks: prefer a retest or a confirming close, and above-average volume.
+3. Support/resistance trades need confirmation (reversal candle, divergence, retest); stop goes where the idea is invalidated, ideally ATR-based, never inside the noise.
+4. VWAP: above = buyers in control (buy pullbacks), below = sellers in control; it is a bias tool, weak in thin liquidity and outside the active session.
+5. Crypto futures crowding filter: strongly positive funding (about +0.05% per interval or more) with rising open interest means crowded longs and correction risk; very negative funding is the mirror. Treat as a flag that lowers confidence, not as a direction signal. BTC leads ETH and alts.
+6. Stand aside or flag risk around high-impact news (FOMC, CPI, NFP) and in thin or rollover hours.
+7. Filters must not manufacture edge: a setup with weak raw expectancy is not rescued by stacking indicators. Small samples (under ~30 trades) and unconfirmed out-of-sample results deserve low trust; say so honestly. No result is guaranteed.
+"""
+G["_KNOW"] = os.environ.get("TA_KNOW", "1") != "0" and _KNOW or ""
+
+os.environ.setdefault("TA_AGENTS", "0")  # پیش‌فرض: موتور سبک بدون ایجنت مدلی (سریع، بدون نیاز به کلید)؛ TA_AGENTS=1 = تیم کامل ایجنت‌ها
+
+def _engine_src():
+    """متن موتور را می‌خواند و دو عدد را از env می‌گیرد (engine.py دست‌نخورده می‌ماند):
+    TA_AGENT_MIN  = سقف زمان تیم ایجنت‌ها بعد از پیدا شدن ستاپ (دقیقه). تمام نشد = سیگنال بدون ایجنت و با پرچم ریسک، اما فرستاده می‌شود.
+    TA_LLM_TOPK   = 0 یعنی ایجنت‌ها وسط جست‌وجو نامزدها را رد/کند نمی‌کنند؛ فقط بعد از انتخاب ستاپ تحلیل و درجه‌بندی می‌کنند (مشاور، نه دروازه‌بان)."""
+    src = open(ENGINE, encoding="utf-8").read()
+    try: _am = float(os.environ.get("TA_AGENT_MIN", "7") or 7)
+    except Exception: _am = 7.0
+    try: _tk = int(os.environ.get("TA_LLM_TOPK", "0") or 0)
+    except Exception: _tk = 0
+    for pat, rep in ((r"^AGENT_TIMEOUT_MIN\s*=\s*\d+(?:\.\d+)?", f"AGENT_TIMEOUT_MIN = {max(2.0, _am):g}"),
+                     (r"^ALL_LLM_TOPK\s*=\s*\d+", f"ALL_LLM_TOPK = {max(0, _tk)}")):
+        src, n = re.subn(pat, rep, src, count=1, flags=re.M)
+        if n != 1: say(f"⚠ پچ تنظیمات موتور اعمال نشد: {pat[:20]}")
+    if os.environ.get("TA_EXTRA_STRATS", "1") != "0":      # بازگشت به میانگین (بولینگر+RSI) و مومنتوم (RSI+استوکاستیک) در موتور هستند ولی خاموش بودند؛ بک‌تست خودش بهترین را انتخاب می‌کند
+        for k_ in ("meanrev", "mom"):
+            src, n = re.subn(r'("%s": dict\(n="[^"]*", e="[^"]*", )run=False' % k_, r"\1run=True", src, count=1)
+            if n != 1: say(f"⚠ فعال‌سازی استراتژی {k_} انجام نشد")
+    if G.get("_KNOW"):      # اصول آموزشی به همهٔ تماس‌های مدلی پیوست می‌شود
+        for fn_ in ("_llm_json", "_llm_raw"):
+            src, n = re.subn(r"(def %s\(prompt, model\):\n)" % fn_, r"\1    prompt = _KNOW + chr(10) + '---' + chr(10) + str(prompt)\n", src, count=1)
+            if n != 1: say(f"⚠ پیوست آموزش به {fn_} انجام نشد")
+    return src
+
 rc, status = 0, "ok"
 t0 = time.time()
 _before_signals = _journal_count()
@@ -190,13 +227,16 @@ def _pre_signal_warning():
 
 _prewarn_thread = threading.Thread(target=_pre_signal_warning, name="ntfy-pre-signal", daemon=True)
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
-if not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3")): say("⚠ هر سه کلید GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
+if os.environ.get("TA_AGENTS", "0") != "0" and not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3")): say("⚠ هر سه کلید GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
 else:
     try:
         _prewarn_thread.start()
-        exec(compile(open(ENGINE, encoding="utf-8").read(), ENGINE, "exec"), G)
+        exec(compile(_engine_src(), ENGINE, "exec"), G)
     except _HeadlessStop as e:
         status = f"skip ({e})"
+        _why = {"no-setup-in-window": "در مهلت جست‌وجو ستاپ قابل‌قبول پیدا نشد", "nothing-found": "بهترین گزینه تکراری بود یا داده‌ای نبود",
+                "hourly-quota": "سقف سیگنال ساعتی پر است"}.get(str(e), str(e))
+        _ntfy("Infinity", f"ℹ️ این نوبت سیگنال نداد\nدلیل: {_why}\nدارایی: {os.environ.get('TA_ASSET', 'Gold')}\nزمان تهران: {_tehran()}", 3, ["information_source"])
     except BaseException as e:
         status, rc = f"error: {type(e).__name__}", 1
         tail = _scrub("".join(traceback.format_exception_only(type(e), e)))[:400]
