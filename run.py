@@ -15,6 +15,8 @@ os.environ.setdefault("TA_COOLDOWN_H", "1")
 os.environ.setdefault("TA_TECH_AFTER", "2")      # بیشتر از ۱ یعنی ستاپ «فقط تکنیکال/کم‌اطمینان» هرگز پذیرفته نمی‌شود
 os.environ.setdefault("TA_MIN_PER_HOUR", "0")    # سیگنال ضعیفِ اجباری در انتهای ساعت ممنوع
 os.environ.setdefault("TA_REPO_DIR", os.path.join(HERE, "TradingAgents"))
+os.environ.setdefault("TA_STRICT", "1")           # v28: بدون GO مدیرعامل (درجه A/B) و بدون عبور از پرچم‌های سخت، سیگنال ارسال نمی‌شود
+os.environ.setdefault("TA_LITE_AGENTS", "1")       # v28: اگر تیم اصلی TradingAgents افتاد، ICT/SMC و مدیرعامل با گزارش موتور اجرا شوند
 LOGP = os.path.join(tempfile.gettempdir(), "ta_last_run.log")
 RUN_STARTED = time.time()
 
@@ -89,7 +91,7 @@ def _journal_count():
 
 
 def _scrub(t):
-    for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
+    for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
         v = os.environ.get(k, "")
         if v: t = str(t).replace(v, "***")
     return str(t)
@@ -194,6 +196,10 @@ def _engine_src():
                      (r"^ALL_LLM_TOPK\s*=\s*\d+", f"ALL_LLM_TOPK = {max(0, _tk)}")):
         src, n = re.subn(pat, rep, src, count=1, flags=re.M)
         if n != 1: say(f"⚠ پچ تنظیمات موتور اعمال نشد: {pat[:20]}")
+    # چرخش کلید به‌ازای هر اجرا (به‌جای هر ساعت): شمارندهٔ اجرا از workflow می‌آید
+    if os.environ.get("TA_KEY_START", "").strip().isdigit():
+        src, n = re.subn(r"int\(time\.time\(\) // 3600\) % len\(_GKEYS\)", "int(os.environ.get('TA_KEY_START')) % len(_GKEYS)", src, count=1)
+        if n != 1: say("⚠ پچ چرخش کلید برای هر اجرا اعمال نشد")
     if os.environ.get("TA_EXTRA_STRATS", "1") != "0":      # بازگشت به میانگین (بولینگر+RSI) و مومنتوم (RSI+استوکاستیک) در موتور هستند ولی خاموش بودند؛ بک‌تست خودش بهترین را انتخاب می‌کند
         for k_ in ("meanrev", "mom"):
             src, n = re.subn(r'("%s": dict\(n="[^"]*", e="[^"]*", )run=False' % k_, r"\1run=True", src, count=1)
@@ -226,11 +232,11 @@ def _pre_signal_warning():
     run_state = G.get("_RUN", {})
     if isinstance(run_state, dict) and run_state.get("sent"):
         return  # سیگنال نهایی زودتر رسیده؛ هشدار آماده‌باش دیگر لازم نیست.
-    _ntfy("Infinity", "⏳ احتمالاً تا ۵ دقیقهٔ دیگر تحلیل به پایان می‌رسد و نتیجه/سیگنال آماده می‌شود؛ آماده باشید! 🚀", 4, ["hourglass", "bell"])
+    _ntfy("Infinity", "⏳ جست‌وجو نزدیک پایان است؛ اگر مدیرعامل تأیید کند سیگنال می‌آید، وگرنه این نوبت بی‌سیگنال تمام می‌شود (کیفیت مهم‌تر از تعداد).", 3, ["hourglass"])
 
 _prewarn_thread = threading.Thread(target=_pre_signal_warning, name="ntfy-pre-signal", daemon=True)
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
-if os.environ.get("TA_AGENTS", "0") != "0" and not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3")): say("⚠ هر سه کلید GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
+if os.environ.get("TA_AGENTS", "0") != "0" and not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10")): say("⚠ همهٔ کلیدهای GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
 else:
     try:
         _prewarn_thread.start()
