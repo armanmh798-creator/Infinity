@@ -171,7 +171,7 @@ if LLM_PROVIDER != "rayegan":
         if _v and _v not in [x[1] for x in _GKEYS]: _GKEYS.append((_n, _v))
     if not _GKEYS:
         raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY (و در صورت وجود GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3) را در GitHub Secrets بگذارید.')
-    _GK = {'i': int(time.time() // 3600) % len(_GKEYS), 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
+    _GK = {'i': int(os.environ.get('GITHUB_RUN_NUMBER') or (time.time() // 300)) % len(_GKEYS), 'bad': {}, 'ex_t': 0.0, 'waited': False, 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
 
     class _NoModel(RuntimeError): pass                   # با این کلید هیچ مدل قابل‌استفاده‌ای نبود (سهمیه صفر/پر)
 
@@ -198,19 +198,22 @@ if LLM_PROVIDER != "rayegan":
         except Exception as e: print(f'⚠ اعلان کلید ارسال نشد ({type(e).__name__})')
 
     def _gk_rotate(reason='', used=None):
-        """کلید فعلی خطای سهمیه/دسترسی داد ← کلید بعدی (۱→۲→۳→۱). True = کلید دیگری فعال شد (تماس را دوباره بزن)؛ False = چرخشی ممکن نیست یا همه پشت‌سرهم شکست خوردند."""
+        """کلید فعلی خطای سهمیه/دسترسی داد ← اولین کلیدی که در ۲ دقیقهٔ اخیر خراب نشده. True = کلید دیگری فعال شد؛ False = هر سه کلید همین الان خراب‌اند."""
         with _GK['lock']:
-            if len(_GKEYS) < 2 or _GK['exhausted']: return False
+            if len(_GKEYS) < 2: return False
+            now = time.time()
+            if _GK['exhausted'] and now - _GK['ex_t'] < 120: return False
             if used is not None and used != _GK['i']: return True          # نخ دیگری همین حالا چرخانده؛ دوباره با کلید تازه امتحان کن
-            _GK['streak'] += 1; old = _gk_name()
-            if _GK['streak'] >= len(_GKEYS):
-                _GK['exhausted'] = True; _gk_alert(f'{old}: {reason}'); return False
-            _GK['i'] = (_GK['i'] + 1) % len(_GKEYS); _gk_apply()
+            _GK['exhausted'] = False; old = _gk_name(); _GK['bad'][_GK['i']] = now
+            fresh = [j for j in range(1, len(_GKEYS)) if now - _GK['bad'].get((_GK['i'] + j) % len(_GKEYS), 0.0) > 120]
+            if not fresh:
+                _GK['exhausted'] = True; _GK['ex_t'] = now; _gk_alert(f'{old}: {reason}'); return False
+            _GK['i'] = (_GK['i'] + fresh[0]) % len(_GKEYS); _gk_apply()
             print(f"🔁 {old} جواب نداد ({_scrub(reason)[:90]}) ← رفتم سراغ {_gk_name()}")
             return True
 
-    def _gk_ok():                                         # یک تماس موفق = زنجیرهٔ شکست‌ها صفر می‌شود
-        _GK['streak'] = 0; _GK['exhausted'] = False
+    def _gk_ok():                                         # یک تماس موفق = حافظهٔ کلیدهای خراب پاک می‌شود
+        _GK['streak'] = 0; _GK['exhausted'] = False; _GK['bad'].clear(); _GK['notified'] = False
 
     def _gk_is_key_error(e):
         """فقط خطاهای «کلید/سهمیه» باعث چرخش می‌شوند: 429، 401، 403 و 400 با پیام کلید نامعتبر. (خطای 5xx، Timeout و درخواست بد چرخش نمی‌دهند.)"""
@@ -285,7 +288,7 @@ if LLM_PROVIDER != "rayegan":
             _C._agenerate = _agen
         _C._gk_patched = True
 
-    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر ساعت کلید بعدی: ساعتِ UTC ÷ تعداد کلیدها؛ اجرای ساعتی = چرخش خودکار ۱→۲→۳
+    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر اجرا (هر ۵ دقیقه) کلید بعدی: شمارهٔ اجرا ÷ تعداد کلیدها = چرخش ۱→۲→۳
     print(f"🔄 کلید این اجرا: {_GKEYS[_GK['i']][0]} (از {len(_GKEYS)} کلید)")
     print(f"🔑 {len(_GKEYS)} کلید Gemini آماده است ({' ، '.join(n for n, _ in _GKEYS)})" + ("؛ با خطای سهمیه/دسترسی به‌ترتیب و چرخشی عوض می‌شوند." if len(_GKEYS) > 1 else "؛ برای چرخش GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3 را هم در Secrets و workflow بگذارید."))
     os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'google'
@@ -970,7 +973,10 @@ def run_agents():
         except Exception as e:
             errs.append(f"تلاش {k} ({day}): {type(e).__name__}: {str(e)[:350]}")
             print(f"⚠ {errs[-1][:260]}")
-            if globals().get("_GK", {}).get("exhausted"): raise RuntimeError("همهٔ کلیدهای Gemini پشت‌سرهم خطا دادند (اعلان به گوشی رفت؛ کلید جدید اضافه کنید) | " + " | ".join(errs))
+            _g_ = globals().get("_GK", {})
+            if _g_.get("exhausted") and not _g_.get("waited"):
+                _g_["waited"] = True; print("⏳ هر سه کلید همزمان محدودیت خوردند؛ ۶۵ ثانیه صبر و تلاش دوباره."); time.sleep(65); _g_["exhausted"] = False; _g_["bad"].clear(); continue
+            if _g_.get("exhausted"): raise RuntimeError("همهٔ کلیدهای Gemini پشت‌سرهم خطا دادند (اعلان به گوشی رفت؛ کلید جدید اضافه کنید) | " + " | ".join(errs))
             if use_cb and any(w in str(e).lower() for w in ("pickle", "lock", "callback", "deepcopy", "copy")):
                 use_cb = False; print("   مشکل از گزارش پیشرفت بود؛ بدون آن (فقط گزارش زمان) فوراً دوباره اجرا می‌شود ..."); continue
             if k < len(days):
@@ -1131,7 +1137,10 @@ def spot_price(ref=None, max_age=0, tol=0.015):
         except Exception: return (n, None)
     def ok(p): return bool(p) and (ref is None or ref != ref or abs(p - ref) <= tol * ref)
     got = []
-    for srcs in (_SPOT_SRC, _SPOT_FB):
+    _pn = os.environ.get("TA_SPOT_PRIMARY", "Swissquote")      # فقط یک منبع اصلی؛ میانگین‌گرفتن با GoldAPI/GoldPrice (کندتر) قیمت را از MT5 دور می‌کرد
+    _pri = [s for s in _SPOT_SRC if s[0] == _pn]; _rest = [s for s in _SPOT_SRC if s not in _pri]
+    for srcs in (_pri, _rest, _SPOT_FB):
+        if not srcs: continue
         with ThreadPoolExecutor(len(srcs)) as ex: got = [(n, p) for n, p in ex.map(one, srcs) if ok(p)]
         if got: break
     if not got: return None, ""
@@ -3386,21 +3395,27 @@ def journal_seed_v11():
         journal_add({**base, **d, "t": "from-screenshot-v11"})
 
 def journal_seed_v14():
-    """شش ترید زندهٔ طلا (XAUUSD، ۲۵ نوامبر ۲۰۲۶) از تاریخچهٔ MT5؛ فقط یک‌بار و خودکار. 1R ≈ ۲۶$ (میانگین باخت واقعی: ۲۵٫۹۸$ روی ۰٫۰۳ لات و ۸٫۶۶ نقطه)، پس R تقریبی است. source با «seed» شروع می‌شود تا کالیبراسیون سبک‌ها را تغییر ندهد؛ فقط آمار ژورنال و «درس‌ها» را تغذیه می‌کند. زمان‌ها ساعت سرور MT5 است و نقطهٔ ورودِ زمانی در دست نیست."""
-    if any(x.get("source") == "seed1125" for x in _jread()): return
+    """دوازده ترید زندهٔ طلا (XAUUSD، ۲۵ نوامبر ۲۰۲۶؛ فاز ۱ پراپ با این نشست پاس شد) از تاریخچهٔ MT5 و اکسل؛ خودکار و بدون تکرار (هر ترید با ورود+خروج+لات شناسایی می‌شود، پس اگر شش ترید قبلی ثبت شده باشد فقط بقیه اضافه می‌شود). 1R ≈ ۲۶$ (باخت ۰٫۰۳ لات با ۸٫۶۶ نقطه = ۲۵٫۹۸$)، پس R تقریبی است. source «seed1125» است تا کالیبراسیون سبک‌ها تغییر نکند؛ فقط آمار ژورنال و «درس‌ها» را تغذیه می‌کند. زمان‌ها ساعت سرور MT5 است. t = زمان بسته‌شدن؛ t_open = زمان باز شدن (برای ۲ ترید آخر در اکسل نبود)."""
+    have = {(x.get("entry"), x.get("exit"), x.get("lots")) for x in _jread() if x.get("source") == "seed1125"}
     U = 26.0
-    base = dict(asset="Gold", instrument="XAUUSD", price_space="spot", rating="live MT5 history", source="seed1125", agents_ok=True, t_tz="MT5 server time (close)")
-    T = [  # (جهت، لات، ورود، خروج، سود/زیان $، زمان بسته‌شدن)
-        (-1, 0.02, 3566.01, 3563.62, 4.78, "2026-11-25T02:38:31"), (-1, 0.03, 3562.76, 3561.10, 4.98, "2026-11-25T02:40:34"),
-        (1, 0.03, 3554.71, 3546.05, -25.98, "2026-11-25T04:02:03"), (1, 0.07, 3545.33, 3549.58, 29.75, "2026-11-25T04:15:54"),
-        (-1, 0.05, 3556.08, 3549.62, 32.30, "2026-11-25T04:52:17"), (-1, 0.04, 3535.66, 3531.15, 18.04, "2026-11-25T05:46:28")]
-    lesson = ("نشست طلا ۲۵ نوامبر (۶ ترید MT5، ۵ برد و ۱ باخت، PF ≈ ۳٫۴۶، خالص ≈ +۶۳٫۸۷$ ≈ +۲٫۵R با 1R≈۲۶$): طلا از ≈۳۵۶۶ تا ≈۳۵۳۱ ریخت. هر ۴ SELLِ هم‌جهت با ریزش برد شدند؛ "
-              "از ۲ BUY ضدروند یکی استاپ شد (BUY ۳۵۵۴٫۷۱ ← ۳۵۴۶٫۰۵، حدود −۸٫۶۶ نقطه ≈ −۱R) و BUY بعدی از قیمتی پایین‌تر از خروج قبلی (۳۵۴۵٫۳۳) ≈ +۱٫۱R برد. "
-              "دو SELL اول فقط حدود +۰٫۲R گرفتند (≈۲ نقطه؛ بستن زودهنگام) در حالی که SELLهای بعدی +۰٫۷ تا +۱٫۲R شدند. "
-              "نکته: نمونه فقط ۶ ترید در یک روند است، قاعدهٔ قطعی نیست؛ در روند ریزشیِ روشن، SELL هم‌جهت وزن بیشتری داشته و BUY ضدروند ریسک بیشتری.")
-    for i, (side, lots, e, x, pnl, tc) in enumerate(T):
+    base = dict(asset="Gold", instrument="XAUUSD", price_space="spot", rating="live MT5 history", source="seed1125", agents_ok=True, t_tz="MT5 server time")
+    T = [  # (جهت، لات، ورود، خروج، سود/زیان $، باز شدن، بسته شدن)
+        (-1, 0.02, 3566.01, 3563.62, 4.78, "2026-11-25T02:26:32", "2026-11-25T02:38:31"), (-1, 0.03, 3562.76, 3561.10, 4.98, "2026-11-25T02:22:44", "2026-11-25T02:40:34"),
+        (1, 0.03, 3554.71, 3546.05, -25.98, "2026-11-25T02:50:50", "2026-11-25T04:02:03"), (1, 0.07, 3545.33, 3549.58, 29.75, "2026-11-25T04:03:15", "2026-11-25T04:15:54"),
+        (-1, 0.05, 3556.08, 3549.62, 32.30, "2026-11-25T04:20:38", "2026-11-25T04:52:17"), (-1, 0.04, 3535.66, 3531.15, 18.04, "2026-11-25T05:41:16", "2026-11-25T05:46:28"),
+        (-1, 0.03, 3521.43, 3517.59, 11.52, "2026-11-25T06:04:52", "2026-11-25T06:07:59"), (-1, 0.04, 3518.78, 3524.84, -24.24, "2026-11-25T06:02:43", "2026-11-25T06:10:14"),
+        (-1, 0.02, 3525.20, 3533.46, -16.52, "2026-11-25T06:15:48", "2026-11-25T08:30:13"), (-1, 0.03, 3526.95, 3516.01, 32.82, "2026-11-25T12:36:28", "2026-11-25T12:46:55"),
+        (-1, 0.03, 3522.45, 3510.69, 35.28, None, "2026-11-25T13:15:09"), (-1, 0.01, 3507.90, 3507.14, 0.76, None, "2026-11-25T13:22:45")]
+    lesson = ("نشست طلا ۲۵ نوامبر ۲۰۲۶ (۱۲ ترید MT5؛ فاز ۱ پراپ با ۱۰۰۰$ → ۱۱۰۲$ پاس شد): ۹ برد و ۳ باخت، PF ≈ ۲٫۵۵، خالص ≈ +۱۰۳٫۵$ ≈ +۴R (با 1R≈۲۶$). "
+              "۱۰ SELL هم‌جهت با ریزش از ≈۳۵۶۶ تا ≈۳۵۰۷: ۸ برد و ۲ باخت؛ ۲ BUY ضدروند: یکی استاپ (−۱R) و یکی +۱٫۱R. "
+              "اسکالپ‌های کوتاه (زیر ≈۲۰ دقیقه) تقریباً همه برد شدند؛ ۲ تا از ۳ باخت یا بیش از ۱ ساعت باز ماندند (BUY ۷۱ دقیقه، SELL ۲ ساعت و ۱۵ دقیقه که خلاف جهتِ برگشت ۳۵۲۵←۳۵۳۳ ماند) یا درست روی پولبک بعد از کف جدید باز شدند (SELL ۳۵۱۸٫۷۸ بعد از ریزش). "
+              "درس‌ها: در روند ریزشیِ روشن SELL هم‌جهت بیشترین سود را داد؛ بعد از ریزش تند ورود دوباره در کف ریسک برگشت دارد؛ سیگنالِ باز مانده بیش از ~۱ ساعت بدون پیشرفت را باید بست یا ابطال کرد. "
+              "هشدار: فقط ۱۲ ترید در یک روز و یک روند است، قاعدهٔ قطعی نیست.")
+    new_ = [t for t in T if (t[2], t[3], t[1]) not in have]
+    for i, (side, lots, e, x, pnl, to, tc) in enumerate(new_):
         d = {**base, "side": side, "lots": lots, "entry": e, "exit": x, "pnl_usd": pnl, "R": round(pnl / U, 2), "R_approx": True, "outcome": "SL" if pnl < 0 else "WIN", "t": tc}
-        if i == 2: d["note"] = lesson
+        if to: d["t_open"] = to
+        if i == len(new_) - 1: d["note"] = lesson
         journal_add(d)
 
 try: journal_seed_v14()      # ایدمپوتنت: اگر قبلاً ثبت شده باشد کاری نمی‌کند
