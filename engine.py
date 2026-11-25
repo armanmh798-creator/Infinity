@@ -171,7 +171,7 @@ if LLM_PROVIDER != "rayegan":
         if _v and _v not in [x[1] for x in _GKEYS]: _GKEYS.append((_n, _v))
     if not _GKEYS:
         raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY (و در صورت وجود GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3) را در GitHub Secrets بگذارید.')
-    _GK = {'i': 0, 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
+    _GK = {'i': int(time.time() // 3600) % len(_GKEYS), 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
 
     class _NoModel(RuntimeError): pass                   # با این کلید هیچ مدل قابل‌استفاده‌ای نبود (سهمیه صفر/پر)
 
@@ -285,7 +285,8 @@ if LLM_PROVIDER != "rayegan":
             _C._agenerate = _agen
         _C._gk_patched = True
 
-    os.environ['GOOGLE_API_KEY'] = _GKEYS[0][1]
+    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر ساعت کلید بعدی: ساعتِ UTC ÷ تعداد کلیدها؛ اجرای ساعتی = چرخش خودکار ۱→۲→۳
+    print(f"🔄 کلید این اجرا: {_GKEYS[_GK['i']][0]} (از {len(_GKEYS)} کلید)")
     print(f"🔑 {len(_GKEYS)} کلید Gemini آماده است ({' ، '.join(n for n, _ in _GKEYS)})" + ("؛ با خطای سهمیه/دسترسی به‌ترتیب و چرخشی عوض می‌شوند." if len(_GKEYS) > 1 else "؛ برای چرخش GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3 را هم در Secrets و workflow بگذارید."))
     os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'google'
     os.environ['TRADINGAGENTS_MAX_DEBATE_ROUNDS'] = '2'
@@ -591,7 +592,7 @@ except Exception:
 # ================= تنظیمات (فقط همین بخش را عوض کنید) =================
 # ---- دارایی و حالت اجرا ----
 ASSET = os.environ.get("TA_ASSET", "Gold") or "Gold"
-ALL_ASSETS = ["BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX", "EURUSD", "GBPUSD", "Gold", "US30", "NAS100", "USOIL"]  # دارایی‌هایی که ALL اسکن می‌کند؛ هر کدام را نمی‌خواهید حذف کنید
+ALL_ASSETS = ["BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX", "EURUSD", "GBPUSD", "Gold", "Silver", "US30", "NAS100", "USOIL"]  # دارایی‌هایی که ALL اسکن می‌کند؛ هر کدام را نمی‌خواهید حذف کنید
 USE_AGENTS = os.environ.get("TA_AGENTS", "1") != "0"
 MODE = "bold"                                 # careful | balanced | bold (جرأت بیشتر در ورود)
 TZ_HOURS = 3.5                                # اختلاف ساعت شما با UTC (ایران = 3.5)
@@ -612,14 +613,14 @@ MAX_RISK_ATR = 1.3                            # SL دورتر از این × ATR
 STOP_HUNT_AWARE = True                        # SL پشت جاهایی که عموم استاپ می‌گذارند
 SL_SEEK_ATR = 0.5                             # اگر استخر استاپ تا این فاصله (ATR) پشت SL بود، SL پشت آن برود
 SL_MAX_MOVES = 1                              # حداکثر دفعات جابه‌جایی SL
-ROUND_STEP = {"BTC": 1000, "ETH": 50, "DOGE": 0.005, "SHIB": 0.0000001, "EURUSD": 0.005, "GBPUSD": 0.005, "Gold": 10, "US30": 100, "NAS100": 100, "USOIL": 1.0}  # گام «عدد رند» هر دارایی
+ROUND_STEP = {"Silver": 0.5, "BTC": 1000, "ETH": 50, "DOGE": 0.005, "SHIB": 0.0000001, "EURUSD": 0.005, "GBPUSD": 0.005, "Gold": 10, "US30": 100, "NAS100": 100, "USOIL": 1.0}  # گام «عدد رند» هر دارایی
 SWEEP_LOOKBACK = 18                           # سوییپ‌های این‌قدر کندل ۵م اخیر بررسی می‌شوند
 KEEP_SIZE = True                              # True = حجم خودکار کم نمی‌شود (فقط پرچم می‌آید)
 RUNNER_ON = False                             # v24: فقط یک کارت (همه پوزیشن‌ها ۱:۲ و ۱:۳)؛ True = کارت 🚀 رانر هم بیاید
 TREND_GATE = os.environ.get("TA_TREND_GATE", "1") != "0"      # v24: ترجیح با روندِ خط‌های روند (۱س، وگرنه ۱۵م): سیگنال خلاف روند رد نمی‌شود، فقط اطمینانش ۲ نمره کم می‌شود و در ریسک‌ها نوشته می‌شود
 # ---- اسپرد و کارمزد ----
 SPREAD_ON = True                              # جابه‌جایی SL/TP فروش با اسپرد
-SPREADS = {"Gold": 0.30, "USOIL": 0.06, "BTC": 0.0, "ETH": 0.0, "DOGE": 0.0, "EURUSD": 0.00010, "GBPUSD": 0.00012, "US30": 0.0, "NAS100": 0.0}  # اسپرد بروکر شما برای هر دارایی
+SPREADS = {"Silver": 0.03, "Gold": 0.30, "USOIL": 0.06, "BTC": 0.0, "ETH": 0.0, "DOGE": 0.0, "EURUSD": 0.00010, "GBPUSD": 0.00012, "US30": 0.0, "NAS100": 0.0}  # اسپرد بروکر شما برای هر دارایی
 SPREAD_MIN_MULT = 5.0                         # SL حداقل این × اسپرد
 FEE_RATE = {k_: 0.0003 for k_ in ("BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX")}  # کارمزد هر سمت در بک‌تست (کریپتو ≈ ۰٫۰۳٪)
 # ---- استراتژی‌ها و بک‌تست ----
@@ -750,9 +751,9 @@ SHADOW_PATH = os.path.join(_DATA, "scalp_shadow.jsonl")
 SIGNALS_PATH = os.path.join(_DATA, "scalp_journal_signals.jsonl")
 JOURNAL_PATH = os.path.join(_DATA, "scalp_journal.jsonl")
 # ---- ظاهر کارت‌ها ----
-PX_DECIMALS = {"EURUSD": 5, "GBPUSD": 5, "DOGE": 5, "SHIB": 9, "XRP": 4, "ADA": 4, "TRX": 5}  # رقم اعشار قیمت (پیش‌فرض ۲)
+PX_DECIMALS = {"Silver": 3, "EURUSD": 5, "GBPUSD": 5, "DOGE": 5, "SHIB": 9, "XRP": 4, "ADA": 4, "TRX": 5}  # رقم اعشار قیمت (پیش‌فرض ۲)
 SHOW_SYMBOL = True                            # نماد/واحد کنار عددها
-CCY_SYMBOL = {"BTC": "$", "ETH": "$", "DOGE": "$", "SHIB": "$", "XRP": "$", "SOL": "$", "BNB": "$", "ADA": "$", "TRX": "$", "LINK": "$", "AVAX": "$", "Gold": "$", "USOIL": "$", "EURUSD": "$", "GBPUSD": "$", "US30": "", "NAS100": ""}  # نماد جلوی عدد
+CCY_SYMBOL = {"Silver": "$", "BTC": "$", "ETH": "$", "DOGE": "$", "SHIB": "$", "XRP": "$", "SOL": "$", "BNB": "$", "ADA": "$", "TRX": "$", "LINK": "$", "AVAX": "$", "Gold": "$", "USOIL": "$", "EURUSD": "$", "GBPUSD": "$", "US30": "", "NAS100": ""}  # نماد جلوی عدد
 PX_UNIT = {"US30": "pts", "NAS100": "pts"}    # واحد پشت عدد
 COPY_BTN = True                               # دکمهٔ کپی کنار اعداد
 # ====================================================================
@@ -770,12 +771,12 @@ def M():
     return m
 SYMS = {"BTC": ("BTC-USD", "crypto"), "ETH": ("ETH-USD", "crypto"), "DOGE": ("DOGE-USD", "crypto"), "SHIB": ("SHIB-USD", "crypto"), "XRP": ("XRP-USD", "crypto"), "SOL": ("SOL-USD", "crypto"), "BNB": ("BNB-USD", "crypto"),
         "ADA": ("ADA-USD", "crypto"), "TRX": ("TRX-USD", "crypto"), "LINK": ("LINK-USD", "crypto"), "AVAX": ("AVAX-USD", "crypto"),
-        "EURUSD": ("EURUSD=X", "forex"), "GBPUSD": ("GBPUSD=X", "forex"), "Gold": ("GC=F", "stock"),
+        "EURUSD": ("EURUSD=X", "forex"), "GBPUSD": ("GBPUSD=X", "forex"), "Gold": ("GC=F", "stock"), "Silver": ("SI=F", "stock"),
         "US30": ("YM=F", "stock"), "NAS100": ("NQ=F", "stock"), "USOIL": ("CL=F", "stock")}      # شاخص‌ها و نفت: فیوچرز CME (E-mini Dow، E-mini Nasdaq-100، WTI) مثل طلا
 _ALIAS = {"BTC": "BTC", "BITCOIN": "BTC", "ETH": "ETH", "ETHEREUM": "ETH", "DOGE": "DOGE", "DOGECOIN": "DOGE", "SHIB": "SHIB", "SHIBA": "SHIB", "SHIBAINU": "SHIB",
           "XRP": "XRP", "RIPPLE": "XRP", "SOL": "SOL", "SOLANA": "SOL", "BNB": "BNB", "BINANCECOIN": "BNB",
           "ADA": "ADA", "CARDANO": "ADA", "TRX": "TRX", "TRON": "TRX", "LINK": "LINK", "CHAINLINK": "LINK", "AVAX": "AVAX", "AVALANCHE": "AVAX",
-          "EURUSD": "EURUSD", "EUR": "EURUSD", "EURO": "EURUSD", "GBPUSD": "GBPUSD", "GBP": "GBPUSD", "POUND": "GBPUSD", "STERLING": "GBPUSD", "GOLD": "Gold", "XAU": "Gold", "XAUUSD": "Gold",
+          "EURUSD": "EURUSD", "EUR": "EURUSD", "EURO": "EURUSD", "GBPUSD": "GBPUSD", "GBP": "GBPUSD", "POUND": "GBPUSD", "STERLING": "GBPUSD", "GOLD": "Gold", "XAU": "Gold", "XAUUSD": "Gold", "SILVER": "Silver", "XAG": "Silver", "XAGUSD": "Silver", "SI": "Silver",
           "US30": "US30", "DOW": "US30", "DOWJONES": "US30", "DJI": "US30", "DJIA": "US30", "YM": "US30",
           "NAS100": "NAS100", "NASDAQ": "NAS100", "NASDAQ100": "NAS100", "NDX": "NAS100", "NQ": "NAS100", "USTEC": "NAS100", "US100": "NAS100",
           "USOIL": "USOIL", "WTI": "USOIL", "CRUDE": "USOIL", "USCRUDE": "USOIL", "CRUDEOIL": "USOIL", "OIL": "USOIL", "CL": "USOIL", "USCRUDEOIL": "USOIL"}
@@ -792,11 +793,11 @@ ALL_MODE = _k in ("ALL", "همه", "BEST", "SCAN", "AUTO")
 ALL_ASSETS = list(dict.fromkeys(_ALIAS[_norm(x_)] for x_ in ALL_ASSETS if _norm(x_) in _ALIAS)) or ["BTC"]
 if ALL_MODE: _apply_asset(ALL_ASSETS[0])
 else:
-    if _k not in _ALIAS: raise ValueError(f"دارایی ناشناخته: {ASSET}. یکی از BTC / ETH / DOGE / SHIB / XRP / SOL / EURUSD / GBPUSD / Gold / US30 / NAS100 / USOIL / ALL")
+    if _k not in _ALIAS: raise ValueError(f"دارایی ناشناخته: {ASSET}. یکی از BTC / ETH / DOGE / SHIB / XRP / SOL / EURUSD / GBPUSD / Gold / Silver / US30 / NAS100 / USOIL / ALL")
     _apply_asset(_ALIAS[_k])
 BASIS_MAX_LAG = {"Gold": 3, "US30": 12, "NAS100": 12, "USOIL": 10}      # فیوچرز شاخص/نفت در ساعت‌های کم‌معامله ممکن است چند دقیقه معامله نداشته باشد؛ تا این‌قدر دقیقه برای حساب اختلاف قابل‌قبول است
 FUT_BASIS = ("Gold", "US30", "NAS100", "USOIL")      # فیوچرز با اسپات/CFD چارت شما فرق دارد (کری، رول): افست از CHART_PRICE حساب می‌شود
-ASSET_DESC = {"Gold": "Gold (XAUUSD spot; data = COMEX GC futures). Drivers: US real yields, USD, Fed expectations, geopolitics/safe-haven flows.",
+ASSET_DESC = {"Silver": "Silver (XAGUSD spot; data = COMEX SI futures). Drivers: gold direction (high beta to gold, gold/silver ratio), USD, US real yields, industrial demand (solar, electronics, China PMI), safe-haven flows; more volatile than gold with larger spikes.", "Gold": "Gold (XAUUSD spot; data = COMEX GC futures). Drivers: US real yields, USD, Fed expectations, geopolitics/safe-haven flows.",
               "US30": "US30 (Dow Jones Industrial Average CFD; data = CME YM E-mini futures). Cash session 09:30-16:00 NY. Drivers: Fed/rates, US macro data (NFP, CPI, PMI), yields, industrial/financial mega-cap earnings, risk sentiment.",
               "NAS100": "NAS100 (Nasdaq-100 CFD; data = CME NQ E-mini futures). Cash session 09:30-16:00 NY. Drivers: mega-cap tech earnings (NVDA, MSFT, AAPL, AMZN, META, GOOGL), AI sentiment, yields/Fed, USD; most volatile of the indices.",
               "USOIL": "USOIL (US crude oil, WTI; data = NYMEX CL futures). Drivers: OPEC+ decisions, EIA inventory report (Wednesday 10:30 NY), geopolitics/Middle East supply risk, USD, China demand, US shale output.",
@@ -1283,7 +1284,7 @@ def _regime(d5t, d5, a):
     at = atr(_rs(d5, "15min")).tail(480); return er, float((at <= a).mean())
 
 _PAIR = {"t": 0.0, "df": None, "sym": None}
-SMT_PAIR = {"EURUSD": "GBPUSD=X", "GBPUSD": "EURUSD=X", "BTC": "ETH-USD", "ETH": "BTC-USD", "DOGE": "BTC-USD", "SHIB": "DOGE-USD", "Gold": "SI=F", "US30": "NQ=F", "NAS100": "YM=F", "USOIL": "BZ=F"}      # واگرایی SMT: داو↔نزدک، WTI↔برنت
+SMT_PAIR = {"Silver": "GC=F", "EURUSD": "GBPUSD=X", "GBPUSD": "EURUSD=X", "BTC": "ETH-USD", "ETH": "BTC-USD", "DOGE": "BTC-USD", "SHIB": "DOGE-USD", "Gold": "SI=F", "US30": "NQ=F", "NAS100": "YM=F", "USOIL": "BZ=F"}      # واگرایی SMT: داو↔نزدک، WTI↔برنت
 def _pair_df():
     sym_p = SMT_PAIR.get(ASSET)
     if not sym_p: return None
@@ -2415,7 +2416,7 @@ def style_stats():
 # ================= v12: تقویم خبری فارکس‌فکتوری + اقتصاددان ارشد (PhD) + شورای ۱۴ نفره (ICT یکی از اعضا) + نفت‌شناس =================
 # ---------- ۱) نگهبان خبر: هر بار که سیگنال ساخته یا قیمت تازه می‌شود، تقویم فارکس‌فکتوری چک می‌شود ----------
 _NEWS = {"t": None, "tf": None, "ev": [], "err": ""}
-_NEWS_CCY = {"USOIL": ("USD", "CNY"), "Gold": ("USD", "CNY"), "BTC": ("USD",), "ETH": ("USD",), "DOGE": ("USD",), "SHIB": ("USD",), "EURUSD": ("EUR", "USD"), "GBPUSD": ("GBP", "USD"), "US30": ("USD",), "NAS100": ("USD",)}
+_NEWS_CCY = {"Silver": ("USD", "CNY"), "USOIL": ("USD", "CNY"), "Gold": ("USD", "CNY"), "BTC": ("USD",), "ETH": ("USD",), "DOGE": ("USD",), "SHIB": ("USD",), "EURUSD": ("EUR", "USD"), "GBPUSD": ("GBP", "USD"), "US30": ("USD",), "NAS100": ("USD",)}
 
 def news_events(force=False):
     """رویدادهای این هفتهٔ فارکس‌فکتوری (فید رسمی خودشان). ۱۰ دقیقه کش می‌شود؛ اگر فید جواب نداد، کش قبلی و در نبودش None برمی‌گردد."""
@@ -2477,13 +2478,13 @@ def _news_txt():
     return "; ".join(ls) or "no High/Medium release in the next 4 hours (calendar checked)"
 
 # ---------- ۲) اقتصاددان ارشد ----------
-_MACRO_T = {"USOIL": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "OVX (oil vol)": "^OVX", "WTI": "CL=F", "Brent": "BZ=F", "RBOB gasoline": "RB=F", "Heating oil": "HO=F", "S&P500": "^GSPC"},
+_MACRO_T = {"Silver": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "Gold": "GC=F", "Copper": "HG=F", "S&P500": "^GSPC"}, "USOIL": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "OVX (oil vol)": "^OVX", "WTI": "CL=F", "Brent": "BZ=F", "RBOB gasoline": "RB=F", "Heating oil": "HO=F", "S&P500": "^GSPC"},
             "Gold": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "Silver": "SI=F", "S&P500": "^GSPC"},
             "DOGE": {"BTC": "BTC-USD", "DXY": "DX-Y.NYB", "VIX": "^VIX"}, "SHIB": {"BTC": "BTC-USD", "DOGE": "DOGE-USD", "DXY": "DX-Y.NYB", "VIX": "^VIX"}, "EURUSD": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "Euro": "EURUSD=X"}, "GBPUSD": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "GBP": "GBPUSD=X"}, "BTC": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "Nasdaq": "^IXIC", "Gold": "GC=F"},
             "ETH": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "Nasdaq": "^IXIC", "BTC": "BTC-USD"},
             "US30": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "S&P500": "^GSPC", "Nasdaq": "^IXIC"},
             "NAS100": {"DXY": "DX-Y.NYB", "US10Y yield": "^TNX", "VIX": "^VIX", "S&P500": "^GSPC", "Semis SOXX": "SOXX"}}
-_FRAME = {"USOIL": "OPEC+ quotas/compliance; EIA (Wed 10:30 NY) and API (Tue) inventories versus consensus and the 5-year seasonal; Cushing stocks; refinery runs and crack spreads (3-2-1); USD and real yields; global PMI and China demand; geopolitical risk premium (Gulf/Hormuz, Iran, Russia sanctions) which creates headline spikes in BOTH directions; Brent-WTI spread; term structure (backwardation = tight); positioning; seasonality.",
+_FRAME = {"Silver": "Gold direction and the gold/silver ratio, USD and US real yields, industrial demand (solar, electronics, China PMI), Fed pricing, safe-haven flows; silver amplifies gold moves.", "USOIL": "OPEC+ quotas/compliance; EIA (Wed 10:30 NY) and API (Tue) inventories versus consensus and the 5-year seasonal; Cushing stocks; refinery runs and crack spreads (3-2-1); USD and real yields; global PMI and China demand; geopolitical risk premium (Gulf/Hormuz, Iran, Russia sanctions) which creates headline spikes in BOTH directions; Brent-WTI spread; term structure (backwardation = tight); positioning; seasonality.",
           "Gold": "US real yields and Fed pricing, USD, central-bank buying, ETF flows, geopolitical safe-haven demand, inflation surprises.",
           "DOGE": "Crypto beta, BTC direction, liquidity, sentiment, meme-token volatility; avoid treating DOGE as independent from BTC.", "SHIB": "Crypto beta, BTC and DOGE direction, liquidity, social-media sentiment, exchange listings and burn news; do not treat SHIB as independent from BTC.", "EURUSD": "ECB/Fed policy divergence, euro-area and US data, yields, DXY, risk sentiment.", "GBPUSD": "BoE/Fed policy divergence, UK and US inflation/jobs data, yields, DXY and risk sentiment.", "BTC": "Global liquidity (Fed, DXY, yields), spot-ETF flows, risk appetite (Nasdaq), leverage (funding/OI), regulation and large-holder flows.",
           "ETH": "Global liquidity, ETF flows, risk appetite (Nasdaq), ETH/BTC relative strength, on-chain activity and staking/supply dynamics.",
@@ -2915,7 +2916,7 @@ _CSS += """<style>
 .tc-bar span{padding:4px 0;text-align:center;white-space:nowrap}
 .tc-f{padding:6px 16px 13px;font-size:12.5px;opacity:.92}
 </style>"""
-ASSET_BADGE = {"EURUSD": ("🇪🇺", "EUR", "🇺🇸", "USD"), "GBPUSD": ("🇬🇧", "GBP", "🇺🇸", "USD"), "Gold": ("🥇", "XAU", "🇺🇸", "USD"), "BTC": ("₿", "BTC", "🇺🇸", "USD"), "ETH": ("Ξ", "ETH", "🇺🇸", "USD"),
+ASSET_BADGE = {"Silver": ("🥈", "XAG", "🇺🇸", "USD"), "EURUSD": ("🇪🇺", "EUR", "🇺🇸", "USD"), "GBPUSD": ("🇬🇧", "GBP", "🇺🇸", "USD"), "Gold": ("🥇", "XAU", "🇺🇸", "USD"), "BTC": ("₿", "BTC", "🇺🇸", "USD"), "ETH": ("Ξ", "ETH", "🇺🇸", "USD"),
                "DOGE": ("Ð", "DOGE", "🇺🇸", "USD"), "SHIB": ("🐕", "SHIB", "🇺🇸", "USD"), "XRP": ("✕", "XRP", "🇺🇸", "USD"), "SOL": ("◎", "SOL", "🇺🇸", "USD"), "BNB": ("🔶", "BNB", "🇺🇸", "USD"), "ADA": ("🔷", "ADA", "🇺🇸", "USD"),
                "TRX": ("🔺", "TRX", "🇺🇸", "USD"), "LINK": ("🔗", "LINK", "🇺🇸", "USD"), "AVAX": ("🔺", "AVAX", "🇺🇸", "USD"),
                "USOIL": ("🛢", "WTI", "🇺🇸", "USD"), "US30": ("🏛", "US30", "", ""), "NAS100": ("💻", "NAS100", "", "")}
@@ -3572,7 +3573,7 @@ def corr_info(side):
         if r.get("asset") != ASSET and t >= lim and (r["asset"] not in last or t >= last[r["asset"]][0]): last[r["asset"]] = (t, int(r["side"]))
     for a_, (_, sd_) in sorted(last.items()): out["same" if sd_ == side else "opp"].append(a_)
     return out
-SHOCK_T = {"BTC": "BTC-USD", "ETH": "ETH-USD", "Gold": "GC=F", "US30": "YM=F", "NAS100": "NQ=F", "USOIL": "CL=F"}
+SHOCK_T = {"Silver": "SI=F", "BTC": "BTC-USD", "ETH": "ETH-USD", "Gold": "GC=F", "US30": "YM=F", "NAS100": "NQ=F", "USOIL": "CL=F"}
 _SHOCK = {"t": 0.0, "v": None}
 def shock_state():
     if not SHOCK_ON: return None
@@ -3640,7 +3641,7 @@ SESS_PRIOR = {   # دانش عمومیِ منابع تحقیق (غیرقطعی؛
     "NY_LATE": "liquidity thins after London close, follow-through fades, fresh entries have worse odds: mean-reversion at most; avoid rollover 21:55-23:00 UTC",
     "WKND": "crypto only: thin liquidity, spikes revert; mean-reversion",
 }
-ASSET_PRIOR = {"BTC": "academic work finds negative autocorrelation (mean reversion) of 1-4h returns, stronger after big moves (leverage liquidations)", "ETH": "behaves like BTC (mean reversion of big intraday moves) but with higher beta",
+ASSET_PRIOR = {"Silver": "behaves like gold with higher beta: follows gold direction with larger swings; the NY overlap is the prime window; thin Asian hours produce stop-hunt wicks", "BTC": "academic work finds negative autocorrelation (mean reversion) of 1-4h returns, stronger after big moves (leverage liquidations)", "ETH": "behaves like BTC (mean reversion of big intraday moves) but with higher beta",
                "Gold": "the overlap window is the prime time for trends; Asian breakouts are mostly liquidity grabs; ICT Silver Bullet windows (NY time 03-04, 10-11, 14-15) are the highest-odds hours for sweep + displacement + FVG entries", "US30": "09:30 NY opening-range breakout is the classic index setup; midday NY is choppy",
                "NAS100": "09:30 NY opening-range breakout; most volatile index, tech earnings/AI sentiment", "USOIL": "inventory (EIA Wed) spikes revert quickly; thin outside 07-20 UTC"}
 
