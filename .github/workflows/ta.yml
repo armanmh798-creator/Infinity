@@ -79,7 +79,7 @@ jobs:
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
           TA_REQUIRE_GO: "0"
           TA_FINAL_FALLBACK: "1"   # پایان مهلت: بهترین گزینه با پرچم ریسک فرستاده می‌شود (همیشه سیگنال)
-          TA_AGENT_MIN: "7"        # سقف زمان تیم ایجنت‌ها؛ بیشتر شد بدون ایجنت ادامه می‌دهد
+          TA_AGENT_MIN: "12"       # سقف زمان تیم ایجنت‌ها (تحلیل کامل ۶ تا ۱۲ دقیقه طول می‌کشد؛ ۷ کم بود)
           TA_LLM_TOPK: "0"         # ایجنت‌ها وسط جست‌وجو دروازه‌بان نیستند
           TA_MIN_PER_HOUR: "0"
           TA_TECH_AFTER: "0.5"     # بعد از نیمهٔ مهلت، ستاپ تکنیکالِ خوب هم پذیرفته می‌شود
@@ -88,6 +88,7 @@ jobs:
           TA_MAX_PER_HOUR: "999"
           TA_SPOT_ADJ: ${{ vars.TA_SPOT_ADJ || '0' }}      # اختلاف بروکر شما با منبع عمومی؛ در Settings→Variables بگذارید
           TA_COOLDOWN_H: ${{ github.event_name == 'workflow_dispatch' && '0' || vars.TA_COOLDOWN_H || '1' }}
+          TA_SPOT_PRIMARY: "Swissquote"   # منبع اصلی قیمت لحظه‌ای؛ فقط اگر نیامد بقیه منابع
           TA_LIVE_SEC: "30"        # قبل از ارسال، ۳۰ ثانیه قیمت زنده آپدیت می‌شود و سیگنال با آخرین قیمت فرستاده می‌شود
           TA_DATA: ${{ github.workspace }}/data
       - uses: actions/upload-artifact@v7
