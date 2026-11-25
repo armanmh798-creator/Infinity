@@ -187,7 +187,10 @@ def _engine_src():
     except Exception: _am = 7.0
     try: _tk = int(os.environ.get("TA_LLM_TOPK", "0") or 0)
     except Exception: _tk = 0
-    for pat, rep in ((r"^AGENT_TIMEOUT_MIN\s*=\s*\d+(?:\.\d+)?", f"AGENT_TIMEOUT_MIN = {max(2.0, _am):g}"),
+    try: _ls = max(0.0, float(os.environ.get("TA_LIVE_SEC", "30") or 30))
+    except Exception: _ls = 30.0
+    for pat, rep in ((r"^LIVE_SECONDS\s*=\s*\d+(?:\.\d+)?", f"LIVE_SECONDS = {_ls:g}"),      # آپدیت زندهٔ قیمت قبل از ارسال سیگنال (پیش‌فرض ۳۰ ثانیه)
+                     (r"^AGENT_TIMEOUT_MIN\s*=\s*\d+(?:\.\d+)?", f"AGENT_TIMEOUT_MIN = {max(2.0, _am):g}"),
                      (r"^ALL_LLM_TOPK\s*=\s*\d+", f"ALL_LLM_TOPK = {max(0, _tk)}")):
         src, n = re.subn(pat, rep, src, count=1, flags=re.M)
         if n != 1: say(f"⚠ پچ تنظیمات موتور اعمال نشد: {pat[:20]}")
