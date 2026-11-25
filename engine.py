@@ -3429,6 +3429,17 @@ def journal_seed_v15():
 try: journal_seed_v15()
 except Exception as _e15: print(f"⚠ ثبت ترید v15 در ژورنال انجام نشد: {type(_e15).__name__}")
 
+def journal_seed_v16():
+    """ترید زندهٔ طلا (XAUUSD SELL، ۲۵ نوامبر ۲۰۲۶، از اسکرین‌شات MT5): لیمیت سیگنال ۲۱:۱۴ تهران پر شد و بعد از حدود ۱۲ دقیقه روی SL بسته شد (−۷۲٫۵۲$ = −۱R). لات از روی سود/زیان محاسبه شد (۱۸٫۱۳ دلار حرکت × ۴ = ۷۲٫۵۲ ← ۰٫۰۴ لات). ایدمپوتنت: با ورود+خروج+لات شناسایی می‌شود."""
+    if any((x.get("entry"), x.get("exit"), x.get("lots")) == (3515.24, 3533.37, 0.04) for x in _jread()): return
+    journal_add(dict(asset="Gold", instrument="XAUUSD", price_space="spot", rating="live MT5 history", source="seed1125c", agents_ok=False, t_tz="MT5 server time",
+                     side=-1, lots=0.04, entry=3515.24, exit=3533.37, sl=3533.37, tp1=3478.99, tp2=3460.86, pnl_usd=-72.52, charges_usd=-0.20, R=-1.0, outcome="SL",
+                     t="2026-11-25T20:06:03", t_open="2026-11-25T19:54:26", score=0, grade="RISKY", strategy=None,
+                     note="سیگنال ۲۱:۱۴ تهران با امتیاز ۰/۱۰۰ (RISKY)، بدون استراتژی و بدون مدیرعامل و بدون نتیجهٔ عامل‌ها ارسال شد (حالت اجباری پایان مهلت). ورود لیمیت ۶٫۶۰ بالاتر از قیمت لحظه‌ای (۰٫۴R)؛ پرچم‌ها: ایمپالس خلاف جهت (حدود ۶ کندل ۵م، ۱٫۴ ATR)، هنوز سوییپ هم‌جهت با سیگنال دیده نشده بود، و سوییپ نقدینگی سمت استاپ (۳۵۲۸٫۶۱) هنوز انجام نشده بود. قیمت اول به ورود رسید ولی بالا رفت و بعد از ~۱۲ دقیقه استاپ خورد. درس: سیگنال با امتیاز ۰ و بدون تأیید سوییپ نباید فرستاده شود؛ TA_FINAL_FALLBACK=0 یا حداقل امتیاز لازم است."))
+
+try: journal_seed_v16()
+except Exception as _e16: print(f"⚠ ثبت ترید v16 در ژورنال انجام نشد: {type(_e16).__name__}")
+
 def journal_stats():
     rows = [x for x in _jread() if x.get("R") is not None]
     if not rows: print("ژورنال خالی است (یا فقط «لغو»)."); return
