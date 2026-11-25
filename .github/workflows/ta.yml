@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       asset:
-        description: "ALL یا یک/چند دارایی (مثلاً BTC یا BTC,ETH)"
+        description: "Gold (پیش‌فرض) یا ALL یا یک/چند دارایی (مثلاً BTC یا BTC,ETH)"
         required: false
-        default: "ALL"
+        default: "Gold"
       search_min:
         description: "حداکثر دقیقه جستجو"
         required: false
@@ -33,8 +33,24 @@ jobs:
           path: data
           key: ta-data-${{ github.run_id }}
           restore-keys: ta-data-
-      - run: git clone -q --depth 1 https://github.com/TauricResearch/TradingAgents
-      - run: pip install -q ./TradingAgents yfinance requests pandas numpy
+      - name: Clone and install TradingAgents
+        run: |
+          set -e
+          git clone -q --depth 1 https://github.com/TauricResearch/TradingAgents TradingAgents
+          echo "--- repo root:"; ls TradingAgents
+          if [ ! -d TradingAgents/tradingagents ]; then
+            P=$(find TradingAgents -maxdepth 3 -type d -name tradingagents | head -1)
+            if [ -n "$P" ]; then ln -s "$(realpath "$P")" TradingAgents/tradingagents; fi
+          fi
+          if [ -f TradingAgents/pyproject.toml ] || [ -f TradingAgents/setup.py ]; then
+            pip install -q ./TradingAgents
+          else
+            echo "no pyproject/setup.py; using requirements + PYTHONPATH"
+            if [ -f TradingAgents/requirements.txt ]; then pip install -q -r TradingAgents/requirements.txt; fi
+          fi
+          pip install -q yfinance requests pandas numpy
+          echo "PYTHONPATH=$GITHUB_WORKSPACE/TradingAgents" >> "$GITHUB_ENV"
+          PYTHONPATH="$GITHUB_WORKSPACE/TradingAgents" python -c "import tradingagents; print('tradingagents OK')"
       - name: Run Infinity scan
         run: python run.py
         env:
@@ -42,12 +58,15 @@ jobs:
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'ALL' }}
-          TA_AGENTS: "0"
+          TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
+          TA_AGENTS: "1"
           TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '55' }}
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
           TA_REQUIRE_GO: "0"
           TA_FINAL_FALLBACK: "0"
+          TA_MIN_PER_HOUR: "0"
+          TA_TECH_AFTER: "2"
+          TA_COOLDOWN_H: "1"
           TA_DATA: ${{ github.workspace }}/data
       - uses: actions/upload-artifact@v4
         if: always()
