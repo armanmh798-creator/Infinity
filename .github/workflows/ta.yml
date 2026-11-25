@@ -36,18 +36,18 @@ jobs:
       - name: Clone and install TradingAgents
         run: |
           set -e
-          git clone -q --depth 1 https://github.com/TauricResearch/TradingAgents TradingAgents
-          echo "--- repo root:"; ls TradingAgents
-          if [ ! -d TradingAgents/tradingagents ]; then
-            P=$(find TradingAgents -maxdepth 3 -type d -name tradingagents | head -1)
-            if [ -n "$P" ]; then ln -s "$(realpath "$P")" TradingAgents/tradingagents; fi
-          fi
-          if [ -f TradingAgents/pyproject.toml ] || [ -f TradingAgents/setup.py ]; then
-            pip install -q ./TradingAgents
-          else
-            echo "no pyproject/setup.py; using requirements + PYTHONPATH"
-            if [ -f TradingAgents/requirements.txt ]; then pip install -q -r TradingAgents/requirements.txt; fi
-          fi
+          # شاخهٔ main ریپوی اصلی دیگر پایتون نیست (پروژهٔ Node/TypeScript شده)؛ نسخهٔ پایتونیِ تگ‌شده را می‌گیریم.
+          OK=0
+          for REF in v0.3.1 v0.3.0 v0.2.5; do
+            rm -rf TradingAgents
+            if git clone -q --depth 1 --branch "$REF" https://github.com/TauricResearch/TradingAgents TradingAgents; then
+              if [ -f TradingAgents/pyproject.toml ] || [ -f TradingAgents/setup.py ]; then
+                echo "using TradingAgents $REF"; OK=1; break
+              fi
+            fi
+          done
+          if [ "$OK" != "1" ]; then echo "no python TradingAgents tag found"; ls TradingAgents || true; exit 1; fi
+          pip install -q ./TradingAgents
           pip install -q yfinance requests pandas numpy
           echo "PYTHONPATH=$GITHUB_WORKSPACE/TradingAgents" >> "$GITHUB_ENV"
           PYTHONPATH="$GITHUB_WORKSPACE/TradingAgents" python -c "import tradingagents; print('tradingagents OK')"
