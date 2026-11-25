@@ -5,9 +5,16 @@ on:
   workflow_dispatch:
     inputs:
       asset:
-        description: "Gold (پیش‌فرض) یا ALL یا یک/چند دارایی (مثلاً BTC یا BTC,ETH)"
+        description: "دارایی (پیش‌فرض Gold)"
+        type: choice
         required: false
         default: "Gold"
+        options:
+          - Gold
+          - Silver
+          - BTC
+          - ETH
+          - ALL
       search_min:
         description: "حداکثر دقیقه جستجو"
         required: false
