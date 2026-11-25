@@ -1083,7 +1083,7 @@ def _binance():
     return None
 
 _LAST_LAG = [0.0]
-def live_price(fallback):
+def _live_price_raw(fallback):
     """قیمت لحظه‌ای (بدون افست): Binance اگر خواسته شد؛ وگرنه میانهٔ چند صرافی USD. نشد → yfinance یک‌دقیقه‌ای → آخرین کندل ۵م (با هشدار)."""
     t = time.time(); note = ""; _LAST_LAG[0] = 0.0
     if PRICE_SOURCE == "binance" and ASSET in BINANCE:
@@ -1102,6 +1102,66 @@ def live_price(fallback):
         return float(d.Close.iloc[-1]), f"yfinance 1m (شروع آخرین کندل {lag:.0f} دقیقه پیش)" + note, time.time() - t
     except Exception:
         return float(fallback), "⚠ منبع زنده در دسترس نبود؛ این آخرین کندل ۵م است", time.time() - t
+
+# ---------- قیمت اسپات طلا (XAUUSD) ؛ داده‌های تحلیل از فیوچرز GC=F می‌آید و چند دلار با اسپات/CFD چارت فرق دارد ----------
+_SPOT = {"t": 0.0, "v": None, "src": ""}
+_UA = {"User-Agent": "Mozilla/5.0 (compatible; infinity-bot)"}
+def _sp_swissquote(j):
+    best = None
+    for q in (j if isinstance(j, list) else [j]):
+        for pr in (q.get("spreadProfilePrices") or []):
+            m = (float(pr["bid"]) + float(pr["ask"])) / 2
+            if best is None or pr.get("spreadProfile") == "prime": best = m
+    return best
+_SPOT_SRC = [("Swissquote", "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD", _sp_swissquote),
+             ("GoldAPI", "https://api.gold-api.com/price/XAU", lambda j: j["price"]),
+             ("GoldPrice", "https://data-asg.goldprice.org/dbXRates/USD", lambda j: j["items"][0]["xauPrice"])]
+_SPOT_FB = [("PAXG-Kraken", "https://api.kraken.com/0/public/Ticker?pair=PAXGUSD", _kr),      # فقط وقتی هیچ منبع اسپاتی جواب نداد (توکن طلا؛ کمی با اسپات فرق دارد)
+            ("PAXG-Binance", "https://data-api.binance.vision/api/v3/ticker/price?symbol=PAXGUSDT", lambda j: j["price"])]
+def spot_price(ref=None, max_age=0, tol=0.015):
+    """فقط طلا: قیمت اسپات XAUUSD از چند منبع عمومی بدون کلید؛ میانهٔ پاسخ‌های معقول. ref = قیمتِ مرجع برای حذف داده‌های پرت (±tol). خروجی: (قیمت یا None، نام منابع)."""
+    if ASSET != "Gold": return None, ""
+    if max_age and _SPOT["v"] is not None and time.time() - _SPOT["t"] < max_age: return _SPOT["v"], _SPOT["src"]
+    def one(s_):
+        n, u, pk = s_
+        try:
+            r = requests.get(u, headers=_UA, timeout=4); r.raise_for_status()
+            p = float(pk(r.json())); return (n, p) if p > 0 else (n, None)
+        except Exception: return (n, None)
+    def ok(p): return bool(p) and (ref is None or ref != ref or abs(p - ref) <= tol * ref)
+    got = []
+    for srcs in (_SPOT_SRC, _SPOT_FB):
+        with ThreadPoolExecutor(len(srcs)) as ex: got = [(n, p) for n, p in ex.map(one, srcs) if ok(p)]
+        if got: break
+    if not got: return None, ""
+    v = float(np.median([p for _, p in got])); src = "+".join(n for n, _ in got)
+    _SPOT.update(t=time.time(), v=v, src=src)
+    return v, src
+
+def live_price(fallback):
+    """طلا: اگر اختلاف اسپات−فیوچرز خودکار حساب شده باشد، قیمت زنده = اسپاتِ لحظه‌ای − افست (در فضای فیوچرز)، تا تأخیر yfinance روی سیگنال اثر نگذارد. غیر طلا یا نشد: همان مسیر قبلی."""
+    if ASSET == "Gold" and AUTO_BASIS and _OFF_AUTO[0]:
+        t = time.time()
+        try: sp, sn = spot_price(ref=(_SPOT["v"] if _SPOT["v"] and time.time() - _SPOT["t"] < 180 else None), max_age=2, tol=0.006)
+        except Exception: sp, sn = None, ""
+        if sp:
+            _LAST_LAG[0] = 0.0
+            return float(sp) - PRICE_OFFSET, f"Spot XAU ({sn}) − basis {PRICE_OFFSET:+.2f}", time.time() - t
+    return _live_price_raw(fallback)
+
+def _basis_store(off=None):
+    """آخرین اختلاف اسپات−فیوچرز طلا را در پوشهٔ data (کش Actions) نگه می‌دارد؛ وقتی آخرین معاملهٔ فیوچرز کهنه است تا ۸ ساعت از همان استفاده می‌شود."""
+    d = globals().get("_DATA")
+    if not d: return None
+    p = os.path.join(d, "gold_basis.json")
+    try:
+        if off is not None:
+            with open(p, "w") as f_: json.dump({"off": float(off), "t": time.time()}, f_)
+            return off
+        j = json.load(open(p))
+        if time.time() - float(j["t"]) <= 8 * 3600: return float(j["off"])
+    except Exception: pass
+    return None
 
 DATA, _SNAP = None, {"t": 0.0, "v": None}
 def snapshot(max_age=0):
@@ -2988,13 +3048,24 @@ _OFF_AUTO = [False]
 def _auto_basis(chart, now):
     """فقط طلا (منبع زنده ندارد و GC=F فیوچرز است نه اسپات): از قیمت چارتی که می‌دهید اختلاف را حساب و در PRICE_OFFSET نگه می‌دارد تا سطوح ساختاری و ورود/SL هم در فضای چارت شما بیایند. در ترید واقعی این اختلاف حدود ۶٫۵ دلار بود (حدود ۰٫۷ ATR)."""
     global PRICE_OFFSET
+    if chart is None and AUTO_BASIS and ASSET == "Gold" and not (PRICE_OFFSET != 0 and not _OFF_AUTO[0]):      # headless: چارت دستی ندارد؛ اسپات لحظه‌ای مرجع است
+        try:
+            _sp, _sn = spot_price(ref=float(now.c))
+            if _sp: chart = _sp; print(f"ℹ قیمت اسپات طلا ({_sn}): {_sp:.2f}")
+            else: print("⚠ قیمت اسپات طلا از هیچ منبعی نیامد.")
+        except Exception as _e: print(f"⚠ گرفتن اسپات طلا خطا داد ({type(_e).__name__})")
     if not (AUTO_BASIS and ASSET in FUT_BASIS and chart is not None): return
     if PRICE_OFFSET != 0 and not _OFF_AUTO[0]: return            # افست دستی شما محترم است
-    p, src, _ = live_price(now.c)
-    if "⚠" in src or _LAST_LAG[0] > BASIS_MAX_LAG.get(ASSET, 3): print(f"⚠ اختلاف فیوچرز با چارت شما حساب نشد: آخرین معاملهٔ {sym} {'در دسترس نبود' if '⚠' in src else f'{_LAST_LAG[0]:.0f} دقیقه پیش بوده (ساعت کم‌معامله یا تأخیر داده)'}. افست قبلی ({PRICE_OFFSET:+.2f}) می‌ماند؛ اگر لازم شد PRICE_OFFSET را دستی (چارت − فیوچرز) بنویسید."); return
+    p, src, _ = _live_price_raw(now.c)
+    if "⚠" in src or _LAST_LAG[0] > BASIS_MAX_LAG.get(ASSET, 3):
+        _o = _basis_store() if ASSET == "Gold" else None
+        if _o is not None: PRICE_OFFSET = _o; _OFF_AUTO[0] = True; print(f"ℹ آخرین معاملهٔ فیوچرز کهنه است؛ از آخرین اختلاف اسپات−فیوچرز ذخیره‌شده ({_o:+.2f}) استفاده شد."); return
+        print(f"⚠ اختلاف فیوچرز با چارت شما حساب نشد: آخرین معاملهٔ {sym} {'در دسترس نبود' if '⚠' in src else f'{_LAST_LAG[0]:.0f} دقیقه پیش بوده (ساعت کم‌معامله یا تأخیر داده)'}. افست قبلی ({PRICE_OFFSET:+.2f}) می‌ماند؛ اگر لازم شد PRICE_OFFSET را دستی (چارت − فیوچرز) بنویسید."); return
     off = round(float(chart) - p, max(PXD, 2))
     if abs(off) > 0.011 * max(p, 1.0): print(f"⚠ اختلاف {off:+.2f} غیرعادی است؛ اعمال نشد (قیمت چارت را چک کنید)."); return
-    PRICE_OFFSET = off; _OFF_AUTO[0] = True; print(f"ℹ اختلاف خودکار چارت شما − منبع داده ({sym}): {off:+.2f}؛ همهٔ اعداد زیر در فضای چارت شما هستند.")
+    PRICE_OFFSET = off; _OFF_AUTO[0] = True
+    if ASSET == "Gold": _basis_store(off)
+    print(f"ℹ اختلاف خودکار چارت شما − منبع داده ({sym}): {off:+.2f}؛ همهٔ اعداد زیر در فضای چارت شما هستند.")
 
 LAST_SIG = {}
 
@@ -3395,7 +3466,12 @@ def _sig_watch_start(since, max_min):
             try:
                 g = dict(LAST_SIG) if LAST_SIG else {}
                 if g.get("entry") is not None and g.get("tp1") is not None and str(g.get("t", "")) >= since:
-                    time.sleep(1.5); _notify_signal(since, from_watch=True); return
+                    if globals().get("_HEADLESS"):      # ارسال اصلی بعد از پایان آپدیت زنده (آخرین قیمت) است؛ این نخ فقط شبکهٔ اطمینان است: ۶۰ ثانیه بعد از آخرین آپدیت اگر نرفته بود می‌فرستد
+                        try: _age = (utcnow() - dt.datetime.fromisoformat(str(g["t"])[:19])).total_seconds()
+                        except Exception: _age = 99
+                        if _age < 60: time.sleep(3); continue
+                    else: time.sleep(1.5)
+                    _notify_signal(since, from_watch=True); return
             except Exception: pass
             time.sleep(3)
     threading.Thread(target=loop, daemon=True).start()
@@ -3420,6 +3496,24 @@ def news_watch_start():
             time.sleep(60)
     threading.Thread(target=loop, daemon=True).start()
 
+def _final_px(g):
+    """درست لحظهٔ ارسال: قیمت زنده را دوباره می‌گیرد (طلا: اسپات) و فاصلهٔ آن تا ورود را نشان می‌دهد؛ اگر قیمت از ورود/SL/TP1 رد شده باشد هشدار می‌دهد. خروجی: (متن، باطل‌شده؟)"""
+    side = int(g.get("side") or 0); e, sl, tp1 = float(g["entry"]), float(g["sl"]), float(g["tp1"])
+    pf, sf, _ = live_price(float("nan"))
+    if pf != pf or "⚠" in sf: return "", False
+    p = pf + PRICE_OFFSET; risk = abs(e - sl) or 1e-9
+    L = [f"🕒 {utcnow() + dt.timedelta(hours=TZ_HOURS):%H:%M:%S} · 💰 قیمت لحظهٔ ارسال: {p:.{PXD}f} ({sf})"]
+    if ASSET == "Gold" and PRICE_OFFSET == 0 and not _OFF_AUTO[0]:
+        sp, sn = spot_price()
+        if sp: L.append(f"🥇 اسپات XAUUSD ({sn}): {sp:.2f} · سطوح این پیام در فضای فیوچرز GC=F است و حدود {sp - p:+.2f} با اسپات فرق دارد؛ ورود را با چارت اسپات خودتان بسنجید.")
+    bad = False
+    if side * (p - sl) <= 0: L.append("⛔ قیمت از حد ضرر رد شده؛ این سیگنال باطل است، ورود نگذارید."); bad = True
+    elif side * (tp1 - p) <= 0: L.append("⛔ قیمت به تارگت ۱ رسیده؛ دیر شده، ورود نگذارید."); bad = True
+    elif side * (p - e) < 0: L.append(f"⚠️ قیمت {abs(e - p):.{PXD}f} از ناحیهٔ ورود رد شده؛ لیمیت همین الان پر می‌شود (مثل مارکت). فاصله تا SL فقط {abs(p - sl):.{PXD}f} است؛ با اعداد واقعی ریسک را بسنجید.")
+    else:
+        L.append(f"📏 ورود {abs(e - p):.{PXD}f} {'پایین‌تر' if side == 1 else 'بالاتر'} از قیمت لحظه‌ای است ({abs(e - p) / risk:.1f}R)." + (" ⚠️ بیش از ۱R دور است؛ ممکن است پر نشود." if abs(e - p) > risk else ""))
+    return "\n".join(L), bad
+
 def _notify_signal(since, from_watch=False):
     """بعد از پایان تحلیل: نتیجه (سیگنال یا نبودنش) را به گوشی می‌فرستد."""
     try:
@@ -3436,6 +3530,11 @@ def _notify_signal(since, from_watch=False):
                    f"👔 مدیرعامل: {g.get('ceo_verdict') or '-'} {('· درجه ' + str(g.get('ceo_grade'))) if g.get('ceo_grade') else ''}\n{line}\n"
                    f"🎯 ورود: {g.get('entry')}\n🛑 حد ضرر: {g.get('sl')}\n✅ تارگت ۱: {g.get('tp1')}\n🏁 تارگت ۲: {g.get('tp2')}\n{line}\n"
                    f"⚖ ریوارد نهایی: ۱ به {_rrv}\n⏳ سفارش لیمیت تا ۱ ساعت معتبر است؛ بعد از آن لغو کنید. قیمت لحظه‌ای را با چارت خودتان بسنجید.")
+            try:      # لحظهٔ ارسال: قیمت زنده دوباره گرفته می‌شود تا سیگنال کهنه نباشد
+                _fin, _bad = _final_px(g)
+                if _fin: msg = msg.replace(line + "\n🏅", line + "\n" + _fin + "\n" + line + "\n🏅", 1)
+                if _bad: msg = "🚨 سیگنال از اعتبار افتاده 🚨\n" + msg
+            except Exception as _fe: print(f"⚠ تازه‌سازی قیمت لحظهٔ ارسال ناموفق: {type(_fe).__name__}")
             try:      # v25: ریسک ثابت؛ حجم از روی فاصلهٔ SL
                 _ru = abs(float(g["entry"]) - float(g["sl"])); _un = RISK_USD / _ru
                 msg += (f"\n{line}\n💼 ریسک ثابت ${RISK_USD:g} ← حجم ≈ {_un:,.6g} واحد (≈ ${_un * float(g['entry']):,.0f})\n"
@@ -3513,6 +3612,16 @@ STRATS = {
                   rule="تقاطع EMA5 و EMA10 روی ۵م + RSI7 هم‌جهت (>۵۵ یا <۴۵) + جهت ۱۵م هم‌سو؛ فقط در سشن‌های پرنقدینگی (لندن و همپوشانی). نیاز به اسپرد کم."),
     "pairs": dict(n="جفت‌معامله / آربیتراژ آماری", e="🔗", run=False, tf="۱۵م",
                   rule="نسبت قیمت دارایی به جفت همبسته‌اش (BTC↔ETH، طلا↔نقره، داو↔نزدک، WTI↔برنت) Z-score ۲۴ ساعته؛ Z>۲ = دارایی گران‌تر شده → فروش؛ Z<−۲ → خرید. (در این ربات فقط پای همین دارایی معامله می‌شود)."),
+    "sb": dict(n="سیلور بولت ICT (پنجرهٔ طلایی + سویپ + FVG + همسو با روند ۱س/۴س)", e="🔫", run=True, tf="۵م",
+               rule="فقط در پنجره‌های سیلور بولت (به وقت نیویورک: ۰۳–۰۴، ۱۰–۱۱، ۱۴–۱۵): ابتدا نقدینگیِ سقف/کفِ ۲ ساعت اخیر با سایه گرفته شود (سویپ)، سپس ظرف حدود ۱ ساعت کندل جابه‌جایی (بدنه ≥ ۰٫۵ ATR) خلاف جهت سویپ بسته شود، سقف/کف مینور را بشکند (MSS) و یک FVG سه‌کندلی بسازد → ورود لیمیت در FVG هم‌جهت. فقط وقتی جهت ۱س/۴س (EMA20/50) هم‌جهت یا دست‌کم بدون مخالف باشد. گزارش‌های منبع: حالت مکانیکی حدود ۵۵–۶۰٪ برد؛ با فیلتر روند حدود ۷۲–۸۳٪ (فقط بک‌تستِ گزارش‌شده، تضمین نیست؛ قاضی بک‌تست همین ربات است)."),
+    "sbs": dict(n="سیلور بولت + واگرایی SMT (کم‌تعداد، باکیفیت)", e="🧿", run=True, tf="۵م",
+                rule="همان سیلور بولت، ولی سویپ باید با واگرایی SMT همراه باشد: دارایی کف/سقف تازه می‌سازد ولی جفتِ همبسته‌اش (طلا↔نقره، داو↔نزدک، BTC↔ETH، یورو↔پوند) نمی‌سازد. تعداد ستاپ کمتر ولی کیفیت بالاتر؛ بدون داده جفت اجرا نمی‌شود."),
+    "vwap": dict(n="VWAP + RSI (پولبک همسو با روند روز)", e="📊", run=True, tf="۱۵م",
+                 rule="قیمت بالای VWAP روزانه و EMA20>EMA50 (روند صعودی): وقتی اصلاح به نزدیکی VWAP (≤۰٫۵ ATR) رسید و RSI از زیر ۴۵ به بالا برگشت → خرید؛ نزولی برعکس (RSI از بالای ۵۵ برگردد). خروج از ساعات کم‌حجم و بدون حجم معتبر اجرا نمی‌شود."),
+    "pull": dict(n="پولبک به EMA20 در روند (کندل برگشتی)", e="↩️", run=True, tf="۱۵م",
+                 rule="روند صعودی (EMA20>EMA50 و قیمت بالای EMA50 و ADX≥۱۸): کف کندل به EMA20 برسد ولی کلوز بالای آن و کندل صعودی باشد و RSI در ۴ کندل اخیر زیر ۵۰ رفته باشد → خرید؛ نزولی برعکس. وین‌ریت متوسط، ریوارد خوب؛ در رنج خوب نیست."),
+    "retest": dict(n="شکست سطح + ریتست تأییدی", e="🔁", run=True, tf="۱۵م",
+                   rule="بعد از شکست سقف/کف ۴۰ کندل، منتظر برگشت قیمت به همان سطح (ریتست ≤۰٫۱۵ ATR) می‌مانیم؛ کندل برگشتیِ هم‌جهت شکست با کلوز بیرون سطح → ورود. شکست‌های کاذب (کلوز دوباره ۰٫۵ ATR داخل) لغو می‌شوند."),
     "grid": dict(n="گرید", e="🕸", run=False, tf="-",
                  rule="سفارش‌های چندپله‌ای در رنج. با مدیریت ثابت «یک ورود، یک SL، ۱R» سازگار نیست (مارتینگل‌گونه، در روند قوی ضرر انباشته). فقط به‌عنوان نشانهٔ «بازار رنج است» گزارش می‌شود."),
     "carry": dict(n="کری ترید (اختلاف نرخ بهره)", e="🏦", run=False, tf="-",
@@ -3532,7 +3641,7 @@ SESS_PRIOR = {   # دانش عمومیِ منابع تحقیق (غیرقطعی؛
     "WKND": "crypto only: thin liquidity, spikes revert; mean-reversion",
 }
 ASSET_PRIOR = {"BTC": "academic work finds negative autocorrelation (mean reversion) of 1-4h returns, stronger after big moves (leverage liquidations)", "ETH": "behaves like BTC (mean reversion of big intraday moves) but with higher beta",
-               "Gold": "the overlap window is the prime time for trends; Asian breakouts are mostly liquidity grabs", "US30": "09:30 NY opening-range breakout is the classic index setup; midday NY is choppy",
+               "Gold": "the overlap window is the prime time for trends; Asian breakouts are mostly liquidity grabs; ICT Silver Bullet windows (NY time 03-04, 10-11, 14-15) are the highest-odds hours for sweep + displacement + FVG entries", "US30": "09:30 NY opening-range breakout is the classic index setup; midday NY is choppy",
                "NAS100": "09:30 NY opening-range breakout; most volatile index, tech earnings/AI sentiment", "USOIL": "inventory (EIA Wed) spikes revert quickly; thin outside 07-20 UTC"}
 
 ASSET_PRIOR.update({"SHIB": "meme-coin with tiny unit price: follows DOGE and BTC with extra social-media spikes; moves reverse fast, treat BTC direction as the real driver", "DOGE": "meme-coin beta to BTC with extra spikes on social-media news; moves reverse fast, treat BTC direction as the real driver",
@@ -3581,6 +3690,59 @@ def _sweep_sig(o, h, l, c, a, look=24, wait=3, body=0.8):
             if b == 1 and c[j] > o[j] and (c[j] - o[j]) >= body * a[j] and c[j] > h[i:j].max(): sig[j] = 1; break
     return sig, swp
 
+SB_WINDOWS_NY = ((3, 4), (10, 11), (14, 15))      # پنجره‌های سیلور بولت به وقت نیویورک (ساعت تابستانی خودکار)
+def _sb_hours(idx):
+    ix = pd.DatetimeIndex(idx)
+    try: ny = ix.tz_localize("UTC").tz_convert("America/New_York")
+    except Exception: ny = ix - pd.Timedelta(hours=5)
+    return np.asarray(ny.hour) + np.asarray(ny.minute) / 60.0
+def _sb_in_window(ts):
+    h_ = float(_sb_hours([pd.Timestamp(ts)])[0]); return any(a_ <= h_ < b_ for a_, b_ in SB_WINDOWS_NY)
+
+def _htf_dir5(d5, av5):
+    """جهت ۱س + ۴س (هرکدام ±۱ با EMA20/50 و قیمت نسبت به EMA50؛ فقط کندل‌های کاملاً بسته) روی محور ۵م؛ بدون نگاه به آینده. جمع: -2..+2"""
+    out = np.zeros(len(d5), dtype=float)
+    for rule, mins in (("60min", 60), ("240min", 240)):
+        try:
+            r_ = _rs(d5, rule).Close.dropna(); e20_, e50_ = ema(r_, 20), ema(r_, 50)
+            t_ = pd.Series(np.where((e20_ > e50_) & (r_ > e50_), 1, np.where((e20_ < e50_) & (r_ < e50_), -1, 0)), index=r_.index + pd.Timedelta(minutes=mins))
+            out += t_.reindex(av5, method="ffill").fillna(0).values
+        except Exception: pass
+    return out
+
+def _sb_signals(d5, a5, av5, pair5=None):
+    """سیلور بولت ICT روی ۵م (علّی، بدون نگاه به آینده). سویپ نقدینگی ← کندل جابه‌جایی + MSS ← FVG سه‌کندلی، فقط در پنجره‌های زمانی و همسو با روند ۱س/۴س. sbs = همان با واگرایی SMT. خروجی: (sb, sbs, arm)"""
+    o, h, l, c = (d5[k_].values.astype(float) for k_ in ("Open", "High", "Low", "Close")); N = len(c); a5 = np.asarray(a5, dtype=float)
+    hr = _sb_hours(d5.index); win = np.zeros(N, dtype=bool)
+    for a_, b_ in SB_WINDOWS_NY: win |= (hr >= a_) & (hr < b_)
+    wk = np.asarray(pd.DatetimeIndex(d5.index).dayofweek) < 5 if atype != "crypto" else np.ones(N, dtype=bool)
+    L = 24; pl = pd.Series(l).rolling(L).min().shift(1).values; ph = pd.Series(h).rolling(L).max().shift(1).values
+    swL = l < pl - 0.05 * a5; swH = h > ph + 0.05 * a5
+    smtL = smtH = None
+    if pair5 is not None and len(pair5) > 600:
+        try:
+            ps = pair5.reindex(d5.index, method="ffill", limit=3); sl_, sh_ = ps.Low.values.astype(float), ps.High.values.astype(float)
+            spl = pd.Series(sl_).rolling(L).min().shift(1).values; sph = pd.Series(sh_).rolling(L).max().shift(1).values
+            nL, nH = (sl_ < spl), (sh_ > sph)                      # جفت هم کف/سقف تازه ساخت
+            near = lambda x_: (x_ | np.r_[x_[1:], False] | np.r_[False, x_[:-1]])
+            smtL = swL & ~near(nL) & ~np.isnan(spl); smtH = swH & ~near(nH) & ~np.isnan(sph)      # دارایی ساخت، جفت نساخت
+        except Exception: smtL = smtH = None
+    htf = _htf_dir5(d5, av5); body = np.abs(c - o); sb = np.zeros(N, dtype=int); sbs = np.zeros(N, dtype=int)
+    for i in range(L + 8, N):
+        if not (win[i] and wk[i]) or not (a5[i] == a5[i] and a5[i] > 0): continue
+        a = a5[i]
+        bull = l[i] > h[i - 2] + 0.05 * a and c[i - 1] > o[i - 1] and body[i - 1] >= 0.5 * a and c[i] > h[i - 6:i - 1].max() and swL[i - 12:i].any()
+        bear = h[i] < l[i - 2] - 0.05 * a and c[i - 1] < o[i - 1] and body[i - 1] >= 0.5 * a and c[i] < l[i - 6:i - 1].min() and swH[i - 12:i].any()
+        d = 1 if (bull and not bear) else -1 if (bear and not bull) else 0
+        if d == 0 or d * htf[i] < 1: continue            # فیلتر روند: ۱س/۴س هم‌جهت یا دست‌کم بدون مخالف
+        sb[i] = d
+        if smtL is not None and ((d == 1 and smtL[i - 12:i].any()) or (d == -1 and smtH[i - 12:i].any())): sbs[i] = d
+    arm = None
+    if win[-1] and wk[-1] and not sb[-3:].any():
+        if swL[-12:].any() and htf[-1] >= 0: arm = (1, "کف نقدینگی گرفته شد (سویپ) داخل پنجرهٔ سیلور بولت؛ منتظر کندل جابه‌جایی صعودی، MSS و FVG")
+        elif swH[-12:].any() and htf[-1] <= 0: arm = (-1, "سقف نقدینگی گرفته شد (سویپ) داخل پنجرهٔ سیلور بولت؛ منتظر کندل جابه‌جایی نزولی، MSS و FVG")
+    return sb, sbs, arm
+
 def _strat_signals(d5, pair5=None):
     """همهٔ قوانین PDF روی دادهٔ ۵م. خروجی: رویدادها، زمینهٔ هر کندل ۱۵م (برای آزمون) و وضعیتِ «در حال شکل‌گیری» برای کندل آخر."""
     has_v = "Volume" in d5.columns and float(d5["Volume"].sum()) > 0
@@ -3608,6 +3770,31 @@ def _strat_signals(d5, pair5=None):
         pc = pair5.Close.resample("15min", label="left", closed="left").last().reindex(r.index).ffill(limit=3)
         ratio = c / pc; z = (ratio - ratio.rolling(96).mean()) / ratio.rolling(96).std(ddof=0)
         S["pairs"] = _edge(z < -2).astype(int) - _edge(z > 2).astype(int)
+    vw = None
+    if has_v:      # VWAP روزانه (لنگر: بازگشایی فیوچرز ۲۲ UTC؛ کریپتو ۰۰ UTC)
+        try:
+            _g = (r.index - pd.Timedelta(hours=(0 if atype == "crypto" else 22))).normalize(); _tp = (h + l + c) / 3; _vol = r.Volume.replace(0, np.nan)
+            vw = (_tp * _vol).groupby(_g).cumsum() / _vol.groupby(_g).cumsum()
+        except Exception: vw = None
+    if vw is not None:
+        _upT, _dnT = (e20 > e50) & (c > vw), (e20 < e50) & (c < vw)
+        S["vwap"] = (_upT & (rsi.shift(1) < 45) & (rsi >= 45) & ((l.rolling(6).min() - vw) <= 0.5 * a)).astype(int) - (_dnT & (rsi.shift(1) > 55) & (rsi <= 55) & ((vw - h.rolling(6).max()) <= 0.5 * a)).astype(int)
+    else: S["vwap"] = pd.Series(0, index=r.index)
+    _upP, _dnP = (e20 > e50) & (c > e50) & (adx >= 18), (e20 < e50) & (c < e50) & (adx >= 18)
+    _pbL = _upP & (l <= e20 + 0.1 * a) & (c > e20) & (c > o) & (rsi.rolling(4).min() < 50) & (rsi < 62)
+    _pbS = _dnP & (h >= e20 - 0.1 * a) & (c < e20) & (c < o) & (rsi.rolling(4).max() > 50) & (rsi > 38)
+    S["pull"] = _edge(_pbL).astype(int) - _edge(_pbS).astype(int)
+    _b, _hh, _ll, _o, _h, _l, _c, _a = (x_.values for x_ in (S["brk"], hh, ll, o, h, l, c, a)); rt = np.zeros(len(r), dtype=int); lvl = None; sd_r = 0; j0 = -99
+    for i_ in range(len(r)):
+        if _b[i_] != 0: lvl, sd_r, j0 = (_hh[i_] if _b[i_] > 0 else _ll[i_]), int(_b[i_]), i_; continue
+        if lvl is None: continue
+        if i_ - j0 > 10 or not (_a[i_] == _a[i_]): lvl = None; continue
+        if i_ - j0 < 2: continue
+        if sd_r == 1 and _c[i_] < lvl - 0.5 * _a[i_]: lvl = None
+        elif sd_r == -1 and _c[i_] > lvl + 0.5 * _a[i_]: lvl = None
+        elif sd_r == 1 and _l[i_] <= lvl + 0.15 * _a[i_] and _c[i_] > lvl and _c[i_] > _o[i_]: rt[i_] = 1; lvl = None
+        elif sd_r == -1 and _h[i_] >= lvl - 0.15 * _a[i_] and _c[i_] < lvl and _c[i_] < _o[i_]: rt[i_] = -1; lvl = None
+    S["retest"] = pd.Series(rt, index=r.index); _rt_arm = (sd_r, lvl) if lvl is not None else None
     pb = (c - lo) / (up - lo).replace(0, np.nan)
     CTX = pd.DataFrame({"adx": adx, "rsi": rsi, "pb": pb, "bwp": bwp, "d50": (c - e50) / a, "z": z if z is not None else np.nan, "atrp": a / c * 100}, index=av)
     EV = {k_: _events_from(S[k_].values, av, c.values, a.values, 4) for k_ in S}
@@ -3616,6 +3803,12 @@ def _strat_signals(d5, pair5=None):
     cu, cd = (e5 > e10) & (e5.shift(1) <= e10.shift(1)), (e5 < e10) & (e5.shift(1) >= e10.shift(1))
     sc_ = (cu & (rs7 > 55) & (t5 > 0) & liq).astype(int) - (cd & (rs7 < 45) & (t5 < 0) & liq).astype(int)
     a5 = pd.Series(a.values, index=av).reindex(av5, method="ffill").values; EV["scalp"] = _events_from(sc_.values, av5, c5.values, a5, 6)
+    try:
+        _sbv, _sbsv, _sbarm = _sb_signals(d5, a5, av5, pair5)
+        EV["sb"] = _events_from(_sbv, av5, c5.values, a5, 12); EV["sbs"] = _events_from(_sbsv, av5, c5.values, a5, 12)
+        if _sbarm: ARM["sb"] = _sbarm
+    except Exception as _sbe:
+        print(f"⚠ سیلور بولت محاسبه نشد ({type(_sbe).__name__}: {str(_sbe)[:100]})"); EV["sb"] = EV["sbs"] = _events_from(np.zeros(len(av5)), av5, c5.values, a5, 12)
     cl, ul, ll_, hh_ = float(c.iloc[-1]), float(up.iloc[-1]), float(lo.iloc[-1]), float(a.iloc[-1])
     if cl < ll_: ARM["meanrev"] = (1, "قیمت زیر باند پایین بولینگر است؛ منتظر بازگشت به داخل باند")
     elif cl > ul: ARM["meanrev"] = (-1, "قیمت بالای باند بالای بولینگر است؛ منتظر بازگشت به داخل باند")
@@ -3625,6 +3818,12 @@ def _strat_signals(d5, pair5=None):
     if _sg[-1] == 0 and len(_sw) >= 3 and (_sw[-3:] != 0).any():
         _b = int(_sw[-3:][_sw[-3:] != 0][-1])
         ARM["sweep"] = (-_b, f"نقدینگی {'بالای سقف' if _b == -1 else 'زیر کف'} گرفته شد؛ منتظر کندل جابه‌جایی و شکست ساختار")
+    if vw is not None and not np.isnan(float(vw.iloc[-1])):
+        if cl > float(vw.iloc[-1]) and float(e20.iloc[-1]) > float(e50.iloc[-1]) and float(rsi.iloc[-1]) < 50: ARM["vwap"] = (1, f"روند صعودی بالای VWAP؛ RSI روی {float(rsi.iloc[-1]):.0f}: منتظر برگشت RSI به بالای ۴۵ نزدیک VWAP")
+        elif cl < float(vw.iloc[-1]) and float(e20.iloc[-1]) < float(e50.iloc[-1]) and float(rsi.iloc[-1]) > 50: ARM["vwap"] = (-1, f"روند نزولی زیر VWAP؛ RSI روی {float(rsi.iloc[-1]):.0f}: منتظر برگشت RSI به زیر ۵۵ نزدیک VWAP")
+    if bool(_upP.iloc[-1]) and abs(cl - float(e20.iloc[-1])) <= 0.5 * hh_: ARM["pull"] = (1, "روند صعودی؛ قیمت نزدیک EMA20 است: منتظر کندل برگشتی صعودی")
+    elif bool(_dnP.iloc[-1]) and abs(cl - float(e20.iloc[-1])) <= 0.5 * hh_: ARM["pull"] = (-1, "روند نزولی؛ قیمت نزدیک EMA20 است: منتظر کندل برگشتی نزولی")
+    if _rt_arm: ARM["retest"] = (_rt_arm[0], f"سطح {_rt_arm[1]:,.{PXD}f} شکسته شد؛ منتظر برگشت به همان سطح (ریتست) و کندل تأییدی")
     if float(rsi.iloc[-1]) < 35: ARM["mom"] = (1, f"RSI روی {float(rsi.iloc[-1]):.0f} (اشباع فروش)؛ منتظر برگشت از ۳۰")
     elif float(rsi.iloc[-1]) > 65: ARM["mom"] = (-1, f"RSI روی {float(rsi.iloc[-1]):.0f} (اشباع خرید)؛ منتظر برگشت از ۷۰")
     if z is not None and abs(float(z.iloc[-1])) >= 1.5: ARM["pairs"] = (-int(np.sign(float(z.iloc[-1]))), f"Z نسبت جفت {float(z.iloc[-1]):+.1f}؛ منتظر عبور از ±۲")
@@ -3743,7 +3942,7 @@ def strat_scan(now, price):
             elif k == "carry": ec = AG.get("econ"); r_["detail"] = ("جهت کلان از نگاه اقتصاددان: " + ("صعودی" if ec["bias"] == 1 else "نزولی" if ec["bias"] == -1 else "خنثی")) if ec else "فیلتر کلان: اقتصاددان اجرا نشده."
             else: r_["detail"] = "جایگزین: بک‌تست زنده و آزمون تیم."
             rows.append(r_); continue
-        if k == "pairs" and (k not in EV or pr is None): r_["state"] = "NA"; r_["detail"] = "داده جفت‌ارز در دسترس نیست"; rows.append(r_); continue
+        if k in ("pairs", "sbs") and (k not in EV or pr is None): r_["state"] = "NA"; r_["detail"] = "داده جفت‌ارز در دسترس نیست"; rows.append(r_); continue
         if k == "scalp" and ses not in ("LONDON", "OVERLAP"): r_["state"] = "OFF"; r_["detail"] = "خارج از ساعات پرنقدینگی (فقط لندن و همپوشانی)"; rows.append(r_); continue
         ev = EV.get(k)
         if ev is not None and len(ev):
@@ -3756,6 +3955,7 @@ def strat_scan(now, price):
                 else: r_["state"] = "STALE"; r_["detail"] = f"{age:.0f} دقیقه پیش فعال شد؛ کهنه است."
         if r_["state"] == "IDLE" and k in ARM:
             sd, tx = ARM[k]; r_.update(state="ARMING", side=sd, detail=tx)
+        if r_["state"] == "IDLE" and k in ("sb", "sbs") and not _sb_in_window(now_av): r_["state"] = "OFF"; r_["detail"] = "خارج از پنجره‌های سیلور بولت (۰۳–۰۴، ۱۰–۱۱، ۱۴–۱۵ به وقت نیویورک)"
         if r_["state"] == "IDLE": r_["detail"] = "شرط ورود فعلاً برقرار نیست."
         rows.append(r_)
     if TREND_LOCK:      # v25: خلاف جهتِ روز = رد (در بازار بی‌جهت هر دو سمت آزاد است)
