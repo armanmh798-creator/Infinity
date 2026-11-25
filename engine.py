@@ -1136,8 +1136,32 @@ def spot_price(ref=None, max_age=0, tol=0.015):
         if got: break
     if not got: return None, ""
     v = float(np.median([p for _, p in got])); src = "+".join(n for n, _ in got)
-    _SPOT.update(t=time.time(), v=v, src=src)
+    try: _adj = float(os.environ.get("TA_SPOT_ADJ", "0") or 0)      # تنظیم دستی: قیمت بروکر شما − منبع عمومی (مثلاً −1.6)
+    except Exception: _adj = 0.0
+    if _adj: v += _adj; src += f"{_adj:+.2f}"
+    _SPOT.update(t=time.time(), v=v, src=src); _spot_hist(add=v)
     return v, src
+
+_SH = {"l": None, "w": 0.0}
+def _spot_hist(add=None, near=None, win=150):
+    """تاریخچهٔ کوتاه قیمت اسپات طلا (۶ ساعت، در پوشهٔ data که بین اجراها کش می‌شود). yfinance قیمت GC=F را حدود ۱۰ تا ۱۵ دقیقه دیرتر می‌دهد؛ برای حساب درستِ اختلاف باید اسپات را در همان لحظهٔ آن کندل داشت، نه اسپات الان."""
+    d = globals().get("_DATA"); fp = os.path.join(d, "gold_spot_hist.json") if d else None
+    if _SH["l"] is None:
+        try: _SH["l"] = [tuple(x) for x in json.load(open(fp))] if fp else []
+        except Exception: _SH["l"] = []
+    L, now = _SH["l"], time.time()
+    if add is not None:
+        if not L or now - L[-1][0] >= 15: L.append((now, float(add)))
+        _SH["l"] = L = [x for x in L if now - x[0] <= 6 * 3600]
+        if fp and now - _SH["w"] > 45:
+            try:
+                with open(fp, "w") as f_: json.dump(L, f_)
+                _SH["w"] = now
+            except Exception: pass
+        return None
+    if near is None or not L: return None
+    t_, v_ = min(L, key=lambda x: abs(x[0] - near))
+    return v_ if abs(t_ - near) <= win else None
 
 def live_price(fallback):
     """طلا: اگر اختلاف اسپات−فیوچرز خودکار حساب شده باشد، قیمت زنده = اسپاتِ لحظه‌ای − افست (در فضای فیوچرز)، تا تأخیر yfinance روی سیگنال اثر نگذارد. غیر طلا یا نشد: همان مسیر قبلی."""
@@ -3058,9 +3082,21 @@ def _auto_basis(chart, now):
     if not (AUTO_BASIS and ASSET in FUT_BASIS and chart is not None): return
     if PRICE_OFFSET != 0 and not _OFF_AUTO[0]: return            # افست دستی شما محترم است
     p, src, _ = _live_price_raw(now.c)
+    if ASSET == "Gold" and "⚠" not in src and _LAST_LAG[0] > BASIS_MAX_LAG["Gold"]:      # yfinance روی GC=F همیشه ~۱۰+ دقیقه تأخیر دارد؛ قبلاً همین باعث می‌شد اختلاف هرگز حساب نشود و سطوح در فضای فیوچرز (~۳۰$ بالاتر از اسپات) بیایند
+        _lg = _LAST_LAG[0]; _al = _spot_hist(near=time.time() - _lg * 60 + 60) if _lg <= 45 else None
+        if _al is not None:
+            _off = round(_al - p, 2)
+            if abs(_off) <= 0.011 * max(p, 1.0):
+                PRICE_OFFSET = _off; _OFF_AUTO[0] = True; _basis_store(_off)
+                print(f"ℹ اختلاف اسپات−فیوچرز طلا {_off:+.2f} (اسپات هم‌زمان با کندل {_lg:.0f} دقیقه پیش)؛ سطوح در فضای اسپات هستند."); return
     if "⚠" in src or _LAST_LAG[0] > BASIS_MAX_LAG.get(ASSET, 3):
         _o = _basis_store() if ASSET == "Gold" else None
         if _o is not None: PRICE_OFFSET = _o; _OFF_AUTO[0] = True; print(f"ℹ آخرین معاملهٔ فیوچرز کهنه است؛ از آخرین اختلاف اسپات−فیوچرز ذخیره‌شده ({_o:+.2f}) استفاده شد."); return
+        if ASSET == "Gold" and "⚠" not in src and _LAST_LAG[0] <= 45 and chart is not None:      # آخرین راه: اسپات الان − آخرین کندل فیوچرز (خطا ≈ حرکت قیمت در این چند دقیقه، خیلی کمتر از ~۳۰$)
+            _off = round(float(chart) - p, 2)
+            if abs(_off) <= 0.011 * max(p, 1.0):
+                PRICE_OFFSET = _off; _OFF_AUTO[0] = True
+                print(f"ℹ اختلاف اسپات−فیوچرز طلا {_off:+.2f} (تقریبی؛ کندل فیوچرز {_LAST_LAG[0]:.0f} دقیقه پیش بود و تاریخچهٔ اسپات هنوز ندارم)."); return
         print(f"⚠ اختلاف فیوچرز با چارت شما حساب نشد: آخرین معاملهٔ {sym} {'در دسترس نبود' if '⚠' in src else f'{_LAST_LAG[0]:.0f} دقیقه پیش بوده (ساعت کم‌معامله یا تأخیر داده)'}. افست قبلی ({PRICE_OFFSET:+.2f}) می‌ماند؛ اگر لازم شد PRICE_OFFSET را دستی (چارت − فیوچرز) بنویسید."); return
     off = round(float(chart) - p, max(PXD, 2))
     if abs(off) > 0.011 * max(p, 1.0): print(f"⚠ اختلاف {off:+.2f} غیرعادی است؛ اعمال نشد (قیمت چارت را چک کنید)."); return
