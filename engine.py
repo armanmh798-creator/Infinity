@@ -222,10 +222,69 @@ if LLM_PROVIDER != "rayegan":
         if code == 400: return ('api key' in low or 'api_key' in low) and any(w in low for w in ('invalid', 'not valid', 'expired'))
         return any(w in low for w in ('resource_exhausted', 'resourceexhausted', 'permission_denied', 'permissiondenied', 'unauthenticated', 'api_key_invalid', 'quota exceeded'))
 
+    # ── v28: تماس مدلیِ مقاوم در برابر 503/overload: مدل شلوغ ← صبر + مدل جایگزین + کلید بعدی (قبلاً فقط همان مدل تکرار می‌شد و تیم کامل می‌افتاد) ──
+    _MODEL_BAD = {}                                      # مدل ← تا چه زمانی (epoch) «شلوغ» حساب می‌شود
+    _MODEL_COOL = float(os.environ.get('TA_MODEL_COOL_SEC', '150') or 150)
+    _LLM_BUDGET = float(os.environ.get('TA_LLM_BUDGET_SEC', '180') or 180)      # سقف کل تلاش‌های یک تماس مدلی (ثانیه)
+    _TR_RX = re.compile(r'\b(500|502|503|504)\b')
+
+    def _err_code(e):
+        return next((getattr(e, a) for a in ('code', 'status_code') if isinstance(getattr(e, a, None), int)), None)
+
+    def _is_transient(e):
+        """503 high demand / UNAVAILABLE / 500 / 504 / Timeout / قطع اتصال = موقتی؛ ارزش صبر کردن و مدل دیگر را دارد."""
+        code = _err_code(e); low = (type(e).__name__ + ' ' + str(e)).lower()
+        if code in (500, 502, 503, 504): return True
+        if code in (400, 401, 403, 404): return False
+        if _TR_RX.search(low[:500]): return True
+        return any(w in low for w in ('unavailable', 'overloaded', 'high demand', 'deadline', 'timed out', 'timeout', 'temporarily', 'try again', 'connection', 'internal', 'bad gateway', 'remote end closed', 'reset by peer', 'servererror'))
+
+    def _is_429(e):
+        low = (type(e).__name__ + ' ' + str(e)).lower()
+        return _err_code(e) == 429 or 'resource_exhausted' in low or 'resourceexhausted' in low or bool(re.search(r'\b429\b', low[:400]))
+
+    def _mark_bad(m): _MODEL_BAD[m] = time.time() + _MODEL_COOL
+
+    def _model_chain(first=None):
+        """مدل درخواستی اول، بعد جایگزین‌ها (زنجیرهٔ ساخته‌شده هنگام انتخاب مدل)؛ مدل‌های «شلوغ» به انتها می‌روند."""
+        ch = [m for m in os.environ.get('TA_MODEL_CHAIN', '').split(',') if m]
+        base = ([first] if first else []) + [m for m in ch if m != first]
+        now_ = time.time(); ok_ = [m for m in base if _MODEL_BAD.get(m, 0) <= now_]
+        return ok_ + [m for m in base if m not in ok_]
+
+    def _gem_once(prompt, m):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        for kw in ({'thinking_level': 'medium'}, {}):      # اگر نسخهٔ کتابخانه این پارامتر را نشناخت، بدونش تلاش می‌کند
+            try: return ChatGoogleGenerativeAI(model=m, timeout=LLM_CALL_TIMEOUT, max_retries=1, **kw).invoke(prompt).content
+            except Exception as e:
+                if not kw or not any(w in str(e).lower() for w in ('thinking', 'unexpected', 'extra', 'validation', 'unsupported')): raise
+
+    def _gem_resilient(prompt, model):
+        """هر مدل دو تلاش (با صبر)؛ بعد مدل بعدیِ زنجیره. خطای کلید/سهمیه ← کلید بعدی. بودجهٔ زمانی تمام شد ← آخرین خطا."""
+        t_end = time.time() + _LLM_BUDGET; last = None; n_try = 0
+        for m in _model_chain(model):
+            for att in range(2):
+                if last is not None and time.time() > t_end: raise last
+                n_try += 1; used = _GK['i']
+                try:
+                    c = _gem_once(prompt, m); _MODEL_BAD.pop(m, None); _gk_ok(); return c
+                except Exception as e:
+                    last = e
+                    if _gk_is_key_error(e) and _gk_rotate(f'{type(e).__name__}: {e}', used): continue
+                    if _is_transient(e) or _is_429(e):
+                        print(f"⚠ مدل {m} شلوغ/ناپایدار ({_scrub(str(e))[:90]}) ← " + ('صبر و تلاش دوباره' if att == 0 else 'مدل بعدی'))
+                        if att == 0: time.sleep(5 + 3 * n_try); continue
+                        break
+                    if _err_code(e) == 404 or 'not found' in str(e).lower()[:200]: break      # این مدل در دسترس نیست ← بعدی
+                    raise
+            _mark_bad(m)
+        raise last if last is not None else RuntimeError('هیچ مدلی در زنجیره نبود')
+
     def _gk_install_hooks():
         """تماس‌های TradingAgents/LangChain وسط کار هم کلید را عوض می‌کنند: (الف) هدر کلید در هر درخواست httpx به Google با کلیدِ فعلی جایگزین می‌شود؛ (ب) متد _generate مدل با چرخش + تلاش دوباره پوشانده می‌شود."""
-        if len(_GKEYS) < 2: return
+        _multi = len(_GKEYS) >= 2
         try:
+            if not _multi: raise StopIteration      # تعویض کلید در هدر فقط با چند کلید
             import httpx
             _all_keys = [x[1] for x in _GKEYS]
             def _swap(req):
@@ -242,6 +301,7 @@ if LLM_PROVIDER != "rayegan":
                 _oas = httpx.AsyncClient.send
                 async def _asend(self, request, *a, **k): _swap(request); return await _oas(self, request, *a, **k)
                 _asend._gk = True; httpx.AsyncClient.send = _asend
+        except StopIteration: pass
         except Exception as e: print(f'ℹ هوک httpx برای چرخش کلید نصب نشد ({type(e).__name__}); فقط چرخش در سطح مدل فعال است.')
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI as _C
@@ -264,24 +324,58 @@ if LLM_PROVIDER != "rayegan":
                 if callable(f): f()
             except Exception: pass
 
+        def _mname(self): return re.sub(r'^models/', '', str(getattr(self, 'model', '') or ''))
+
+        def _swap_model(self):
+            """مدل این نمونه شلوغ است ← همین نمونه به مدل جایگزینِ سالم می‌رود (اگر زنجیره‌ای هست)."""
+            try:
+                cur = _mname(self); nxt = next((m for m in _model_chain(None) if m != cur and _MODEL_BAD.get(m, 0) <= time.time()), None)
+                if not nxt or not cur: return False
+                _mark_bad(cur); pre = 'models/' if str(self.model).startswith('models/') else ''
+                try: self.model = pre + nxt
+                except Exception: object.__setattr__(self, 'model', pre + nxt)
+                print(f'🔀 مدل {cur} شلوغ است ← این عامل به {nxt} رفت')
+                return True
+            except Exception: return False
+
+        def _pre(self):
+            try:
+                if _MODEL_BAD.get(_mname(self), 0) > time.time(): _swap_model(self)
+            except Exception: pass
+
         def _gen(self, *a, **k):
+            t_end = time.time() + _LLM_BUDGET; n_tr = 0
             while True:
                 used = _GK['i']
                 if _bound(self) not in (None, used): _rebind(self)
+                _pre(self)
                 try:
-                    r = _og(self, *a, **k); _gk_ok(); return r
+                    r = _og(self, *a, **k); _gk_ok(); _MODEL_BAD.pop(_mname(self), None); return r
                 except Exception as e:
-                    if not _gk_is_key_error(e) or not _gk_rotate(f'{type(e).__name__}: {e}', used): raise
+                    if _gk_is_key_error(e) and _gk_rotate(f'{type(e).__name__}: {e}', used): continue
+                    if (_is_transient(e) or _is_429(e)) and time.time() < t_end:      # 503 «high demand» و مشابه: صبر، هر دوبار یک‌بار مدل عوض کن
+                        n_tr += 1
+                        if n_tr % 2 == 0 and _swap_model(self): continue
+                        print(f'⚠ تماس مدل ناپایدار ({_scrub(str(e))[:80]}) ← {min(30, 5 * n_tr)} ثانیه صبر'); time.sleep(min(30, 5 * n_tr)); continue
+                    raise
         _C._generate = _gen
         if _oag is not None:
             async def _agen(self, *a, **k):
+                import asyncio as _aio
+                t_end = time.time() + _LLM_BUDGET; n_tr = 0
                 while True:
                     used = _GK['i']
                     if _bound(self) not in (None, used): _rebind(self)
+                    _pre(self)
                     try:
-                        r = await _oag(self, *a, **k); _gk_ok(); return r
+                        r = await _oag(self, *a, **k); _gk_ok(); _MODEL_BAD.pop(_mname(self), None); return r
                     except Exception as e:
-                        if not _gk_is_key_error(e) or not _gk_rotate(f'{type(e).__name__}: {e}', used): raise
+                        if _gk_is_key_error(e) and _gk_rotate(f'{type(e).__name__}: {e}', used): continue
+                        if (_is_transient(e) or _is_429(e)) and time.time() < t_end:
+                            n_tr += 1
+                            if n_tr % 2 == 0 and _swap_model(self): continue
+                            await _aio.sleep(min(30, 5 * n_tr)); continue
+                        raise
             _C._agenerate = _agen
         _C._gk_patched = True
 
@@ -455,6 +549,17 @@ if LLM_PROVIDER != "rayegan":
     os.environ['TRADINGAGENTS_DEEP_THINK_LLM'] = DEEP
     os.environ['TRADINGAGENTS_QUICK_THINK_LLM'] = QUICK
     os.environ['TRADINGAGENTS_GOOGLE_THINKING_LEVEL'] = _lvl
+    try:      # v28: زنجیرهٔ جایگزین برای وقتی مدل انتخاب‌شده 503/شلوغ است (هم‌نسلِ DEEP اول؛ پایدار قبل از Preview؛ مدل‌های بدون سهمیه/دسترسی حذف)
+        _badn = {n_ for (n_, _l), s_ in _probe.items() if s_ in ('NO_QUOTA', 'NOT_FOUND', 'FORBIDDEN', 'QUOTA_DAY', 'AUTH')}
+        _fam = D['ver'] >= 3
+        _alt = sorted([c for c in _cands if c['name'] not in (DEEP, QUICK) and c['name'] not in _badn],
+                      key=lambda c: ((c['ver'] >= 3) != _fam, c['preview'], {'flash': 0, 'flash-lite': 1, 'pro': 2}.get(c['tier'], 3), -c['ver']))
+        _ch = []
+        for _m in [DEEP, QUICK] + [c['name'] for c in _alt][:5]:
+            if _m not in _ch: _ch.append(_m)
+        os.environ['TA_MODEL_CHAIN'] = ','.join(_ch)
+        print('🛟 زنجیرهٔ مدل‌های جایگزین (برای 503/شلوغی): ' + ' ← '.join(_ch))
+    except Exception as _ce: print(f'ℹ زنجیرهٔ مدل جایگزین ساخته نشد ({type(_ce).__name__})')
 
     # ── ۷) گزارش شفاف ──
     _rows = ''.join(f"<tr><td style='padding:3px 10px'>{_hl.escape(n)}</td><td style='padding:3px 10px'>{_hl.escape(l)}</td><td style='padding:3px 10px'>{_hl.escape(_FA.get(s, s))}</td></tr>" for n, l, s in _log)
@@ -592,7 +697,7 @@ except Exception:
 # ================= تنظیمات (فقط همین بخش را عوض کنید) =================
 # ---- دارایی و حالت اجرا ----
 ASSET = os.environ.get("TA_ASSET", "Gold") or "Gold"
-ALL_ASSETS = ["BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX", "EURUSD", "GBPUSD", "Gold", "Silver", "US30", "NAS100", "USOIL"]  # دارایی‌هایی که ALL اسکن می‌کند؛ هر کدام را نمی‌خواهید حذف کنید
+ALL_ASSETS = ["Gold", "BTC", "ETH"]  # v29: دامنهٔ اصلی کاربر؛ سایر دارایی‌ها فقط با تغییر صریح این فهرست
 USE_AGENTS = os.environ.get("TA_AGENTS", "1") != "0"
 MODE = "bold"                                 # careful | balanced | bold (جرأت بیشتر در ورود)
 TZ_HOURS = 3.5                                # اختلاف ساعت شما با UTC (ایران = 3.5)
@@ -641,7 +746,7 @@ ALL_LLM_TOPK = 2                              # v23: ALL بعد از بک‌تس
 ALL_SKIP_CLOSED = True                        # v23: دارایی‌های غیرکریپتو (فارکس، طلا، شاخص، نفت) آخر هفته (جمعه ۲۲ تا یکشنبه ۲۲ UTC) اصلاً اسکن نمی‌شوند؛ کریپتو ۲۴/۷ است
 ALL_CRYPTO = ("BTC", "ETH", "DOGE", "SHIB", "XRP", "SOL", "BNB", "ADA", "TRX", "LINK", "AVAX")
 STRAT_LAB_HOURS = 12                          # کش نتیجهٔ بک‌تست (ساعت)
-STRAT_MIN_N = 12                              # زیر این تعداد معامله = «کم‌نمونه»
+STRAT_MIN_N = 30                              # v29: حداقل نمونهٔ سخت‌گیرانه‌تر؛ آمار کم‌نمونه مجوز فعال‌سازی نیست
 STRAT_SHRINK = 10                             # انقباض آمار هر سشن به سمت آمار کل
 STRAT_RANK = "mix"                            # ملاک امتیاز: expectancy | winrate | mix
 STRAT_FRESH_MIN = 45                          # استراتژی تا این‌قدر دقیقه بعد از فعال‌شدن «فعال» است
@@ -652,7 +757,7 @@ STRAT_NEG_SCORE = -0.05                       # امتیاز زیر این = «�
 STRAT_DESK_LLM = False                        # v25 سبک: انتخاب استراتژی فقط از روی بک‌تست (بدون ۱۴ عضو مدلی). True = روشن
 BT_LIMIT_ENTRY = True                         # بک‌تست با ورود لیمیت واقعی
 OOS_FRAC = 0.4                                # سهم آخرِ داده برای آزمون خارج‌ازنمونه
-OOS_MIN_N = 5                                 # زیر این تعداد معامله، OOS قضاوت نمی‌شود
+OOS_MIN_N = 10                                # v29: حداقل نمونهٔ خارج‌ازنمونه برای ارزیابی
 EXAM_ON = False                               # v23: خاموش. آزمون با ~۱۰ موقعیت فقط یک تماس مدل بود و وزن اعضا را از نمونهٔ خیلی کوچک (تقریباً نویز) می‌ساخت؛ لبهٔ واقعی از بک‌تست می‌آید. True = روشن
 EXAM_CASES = 10                               # تعداد موقعیت‌های آزمون
 EXAM_REFRESH_H = 12                           # آزمون هر چند ساعت تکرار شود
@@ -664,6 +769,9 @@ RISK_USD = float(os.environ.get("TA_RISK_USD", "100") or 100)      # v25: ریس
 RISK_ROUNDS = 1                               # دور بحث ریسک
 AGENT_RETRIES = 2                             # تلاش مجدد تیم هنگام خطا (مثلاً ۴۲۹)
 AGENT_RETRY_WAIT = 40                         # صبر بین تلاش‌ها (ثانیه)
+AGENT_ROUNDS = max(1, int(os.environ.get("TA_AGENT_ROUNDS", "2") or 2))      # v28: اگر تیم با خطای زودگذر (503...) افتاد، تا این‌قدر دور دیگر (در سقف TA_AGENT_MIN)
+AGENT_ROUND_WAIT = 45                         # صبر بین دورها (ثانیه)
+LITE_AGENTS = os.environ.get("TA_LITE_AGENTS", "1") != "0"      # v28: تیم اصلی نیفتاد/افتاد، ICT/SMC و مدیرعامل با گزارش موتور اجرا شوند (قبلاً با افتادن تیم، مدیرعامل هم «-» می‌شد)
 AGENT_MAX_AGE = 60                            # تحلیل عامل‌ها قدیمی‌تر از این (دقیقه) = هشدار
 MAX_TOOL_ROUNDS = 10                          # سقف دفعات ابزار هر تحلیلگر
 NEWS_LIMIT = 15                               # حداکثر خبر در تحلیل
@@ -1718,12 +1826,7 @@ def _llm_json(prompt, model):
     if globals().get("LLM_PROVIDER") == "rayegan":
         c = _rg_chat(prompt, model); m = re.search(r"\{.*\}", c, re.S)
         return json.loads(m.group(0)), c
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    c = None
-    for kw in ({"thinking_level": "medium"}, {}):     # اگر نسخهٔ کتابخانه این پارامتر را نشناخت، بدونش تلاش می‌کند
-        try: c = ChatGoogleGenerativeAI(model=model, timeout=LLM_CALL_TIMEOUT, max_retries=2, **kw).invoke(prompt).content; break
-        except Exception as e:
-            if not kw or not any(w in str(e).lower() for w in ("thinking", "unexpected", "extra", "validation", "unsupported")): raise
+    c = _gem_resilient(prompt, model)      # v28: 503/شلوغی ← صبر + مدل جایگزین + کلید بعدی
     if isinstance(c, list): c = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in c)
     m = re.search(r"\{.*\}", c, re.S)
     return json.loads(m.group(0)), c
@@ -1783,16 +1886,11 @@ def _smc_stale():
 # ================= میز مناظره + مدیر سبد (v8.1) =================
 def _llm_raw(prompt, model):
     if globals().get("LLM_PROVIDER") == "rayegan": return _rg_chat(prompt, model)
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    c = None
-    for kw in ({"thinking_level": "medium"}, {}):
-        try: c = ChatGoogleGenerativeAI(model=model, timeout=LLM_CALL_TIMEOUT, max_retries=2, **kw).invoke(prompt).content; break
-        except Exception as e:
-            if not kw or not any(w in str(e).lower() for w in ("thinking", "unexpected", "extra", "validation", "unsupported")): raise
+    c = _gem_resilient(prompt, model)      # v28: 503/شلوغی ← صبر + مدل جایگزین + کلید بعدی
     if isinstance(c, list): c = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in c)
     return str(c).strip()
 
-def _ask(prompt, model, tries=2):
+def _ask(prompt, model, tries=3):
     last = ""
     for _ in range(tries):
         try: return _llm_raw(prompt, model)
@@ -2323,6 +2421,8 @@ SCALP HORIZON (the owner's hard rule): the owner scalps with a relatively large 
 GO when the key conditions hold: (1) the trade comes from an ACTIVE playbook strategy (see PLAYBOOK STRATEGY DESK) whose backtest in the CURRENT session is not negative, and the specialists' strategy preference supports it, (2) there is a structural reason for the entry (sweep/zone/pullback/breakout retest), (3) the stop sits behind liquidity and 1R is manageable, (4) there is room to 3R before strong opposing liquidity, (5) NO High/Medium-impact scheduled release within the next 30 minutes or the last 15 minutes (see SCHEDULED NEWS; if one is there, the verdict can only be WAIT or NO) and the chief economist does not strongly contradict the trade, (6) discipline limits are fine. One missing secondary condition lowers the grade to B or C; it does not turn GO into WAIT. WAIT = valid idea but wrong moment (give the exact trigger). NO = invalidated, against HTF structure with no reversal sequence, no room to 3R, or a discipline limit is hit.
 Grades: A = rare and excellent (a playbook strategy with positive backtest in this session + >=3 independent confirmations + structure + clear room to 3R). B = valid with one notable gap. C = marginal.
 p_tp1 = your honest, calibrated probability (0-100) that price reaches 1.5R before the stop. Typical valid structural setups are 35-55%. Do not lowball out of caution and do not inflate either; it is checked against the journal later.
+
+HARD DISCIPLINE RULES (v28; the owner's own live results today override the confident tone above): the owner was stopped out of FOUR signals in a row on Gold today. Three of them were limit entries placed a few dollars BEYOND the current price, toward an un-swept liquidity pool that sat between the entry and the stop, with no confirmed sweep+MSS (SELL 3458.44 -> SL 3480.64; SELL 3515.24 -> SL 3533.37; SELL 3536.2 -> SL 3552.45; every one was stopped within 12-40 minutes). The owner now wants FEWER, higher-quality signals. Therefore: (a) if a liquidity pool lies between the entry and the stop (within about 1 ATR) and price is still travelling toward it without a confirmed sweep + MSS, the verdict is WAIT with the exact trigger; (b) a limit placed more than about 0.3 ATR away from price in the direction of that pool is a fill-then-stopped pattern: WAIT; (c) strong impulse against the trade in the last 6 five-minute candles = WAIT; (d) if the team report is missing (the rating text says light mode), you are the only judge: be stricter, not looser, and use GO only for a clear A or B; (e) GO means you personally expect TP1 to be reached before the stop, not merely that the idea is valid. Never say GO just because the desk wants action; WAIT is a good answer.
 
 PROPOSED TRADE: <<SIDE>> limit order on <<ASSET>>; team rating: <<RATING>>
 PLAYBOOK STRATEGY DESK (the ONLY trade tools of this desk; the desk trades nothing outside these strategies; judge by the backtest of THIS session; win-rate alone is misleading, expectancy decides):
@@ -2871,6 +2971,7 @@ def grade_signal(now, side, plan):
     except Exception: p1 = None
     if p1 is not None: v_ = max(0.0, min(15.0, (p1 - 40) / 60 * 15)); sc += v_; parts.append(f"احتمال TP1 مدیر سبد {p1:.0f}٪: +{v_:.0f}")
     if plan.get("rev"): sc += 10; parts.append("سوییپ+MSS هم‌جهت: +10")
+    if AG.get("lite"): flags.append("تیم TradingAgents در دسترس نبود؛ مدیرعامل و ICT فقط با گزارش موتور قضاوت کردند")
     if AG["wanted"] and not AG["ok"]: flags.append("تیم عامل‌ها اجرا نشد؛ جهت فقط از اکثریت تایم‌فریم‌هاست" + (f" · علت: {str(AG.get('err') or 'نامشخص')[:160]}" if True else ""))
     if al < MIN_ALIGN: flags.append(f"هم‌جهتی تایم‌فریم‌ها کم است ({al:+d})")
     if not flags: sc += 5
@@ -3006,7 +3107,7 @@ def show_live(now, side, age, seconds, chart=None, rating="", plan=None):
             risk_atr=round(risk / a, 2), rating=str(rating), align=int(now.votes * side), agents_ok=bool(AG["ok"]), session=_session(), smc_verdict=_ai.get("verdict"), smc_conf=_ai.get("confidence"),
             smc_confluence=_ai.get("confluence"), smc_schools=_ai.get("schools"), smc_report=_ai.get("report"),
             size=(plan or {}).get("size", 1.0), size_adv=(plan or {}).get("size_adv"), desk_grade=_dk.get("grade"), desk_p_tp1=_dk.get("p_tp1"), mode=MODE,
-            tier=(G or {}).get("tier"), score=(G or {}).get("score"), flags=(G or {}).get("flags"), rtp1=round(D(rt1), PXD), rtp2=round(D(rt2), PXD),
+            tier=(G or {}).get("tier"), score=(G or {}).get("score"), flags=(G or {}).get("flags"), hard=(G or {}).get("hard"), lite=bool(AG.get("lite")), rtp1=round(D(rt1), PXD), rtp2=round(D(rt2), PXD),
             styles=[r_["k"] for r_ in ((plan or {}).get("council") or {}).get("rows", []) if r_["v"] == side], council_agree=round(((plan or {}).get("council") or {}).get("agree", 0.0), 2),
             ceo_verdict=(AG.get("ceo") or {}).get("verdict"), ceo_grade=(AG.get("ceo") or {}).get("grade"), primary_style=(AG.get("ceo") or {}).get("primary"), ceo_p_tp1=(AG.get("ceo") or {}).get("p_tp1"),
             strat=((AG.get("strat_sel") or {}).get("pick") or {}).get("k"), strat_name=((AG.get("strat_sel") or {}).get("pick") or {}).get("n"))
@@ -3440,6 +3541,17 @@ def journal_seed_v16():
 try: journal_seed_v16()
 except Exception as _e16: print(f"⚠ ثبت ترید v16 در ژورنال انجام نشد: {type(_e16).__name__}")
 
+def journal_seed_v17():
+    """ترید زندهٔ طلا (XAUUSD_o SELL 0.01 لات، ۲۵ نوامبر ۲۰۲۶، MT5 تیکت 389762315): لیمیت سیگنال ۲۲:۱۱ تهران (امتیاز ۰/۱۰۰، RISKY) روی SL بسته شد (−۱۶٫۲۸$ = −۱R). ایدمپوتنت: با ورود+خروج+لات شناسایی می‌شود. تیم عامل‌ها با خطای 503 گوگل نیفتاده بود و مدیرعامل «-» بود."""
+    if any((x.get("entry"), x.get("exit"), x.get("lots")) == (3536.17, 3552.45, 0.01) for x in _jread()): return
+    journal_add(dict(asset="Gold", instrument="XAUUSD", price_space="spot", rating="live MT5 history", source="seed1125d", agents_ok=False, t_tz="MT5 server time",
+                     side=-1, lots=0.01, entry=3536.17, exit=3552.45, sl=3552.45, tp1=3503.7, tp2=3487.45, pnl_usd=-16.28, charges_usd=-0.05, R=-1.0, outcome="SL",
+                     t="2026-11-25T21:05:59", t_open="2026-11-25T20:43:43", ticket=389762315, score=0, grade="RISKY", strategy=None,
+                     note="درس: سیگنال ۲۲:۱۱ (چهارمین استاپِ پشت‌سرهم) بدون عامل/مدیرعامل (خطای 503) و با سوییپ نشدهٔ نقدینگی سمت استاپ (۳۵۳۷٫۵۶) و ورود لیمیت ۶٫۹۸ بالاتر از قیمت فرستاده شد؛ قیمت به لیمیت رسید، از SL گذشت و ~۲۲ دقیقه بعد استاپ خورد. بدون GO مدیرعامل و بدون سوییپ+MSS ورود ممنوع."))
+
+try: journal_seed_v17()
+except Exception as _e17: print(f"⚠ ثبت ترید v17 در ژورنال انجام نشد: {type(_e17).__name__}")
+
 def journal_stats():
     rows = [x for x in _jread() if x.get("R") is not None]
     if not rows: print("ژورنال خالی است (یا فقط «لغو»)."); return
@@ -3612,12 +3724,38 @@ def _final_px(g):
         L.append(f"📏 ورود {abs(e - p):.{PXD}f} {'پایین‌تر' if side == 1 else 'بالاتر'} از قیمت لحظه‌ای است ({abs(e - p) / risk:.1f}R)." + (" ⚠️ بیش از ۱R دور است؛ ممکن است پر نشود." if abs(e - p) > risk else ""))
     return "\n".join(L), bad
 
+# ================= v28: گیت کیفیت (بدون GO مدیرعامل و بدون عبور از پرچم‌های سخت، سیگنال ارسال نمی‌شود) =================
+STRICT = os.environ.get("TA_STRICT", "1") != "0"                      # روشن = فقط سیگنال با تأیید مدیرعامل؛ TA_STRICT=0 = رفتار قبلی (همیشه سیگنال)
+STRICT_HARD = os.environ.get("TA_STRICT_HARD", "1") != "0"            # پرچم سخت (مثلاً سوییپِ سمت استاپ انجام نشده، خبر، جا برای ۱:۳ نیست) = رد
+CEO_GRADES = tuple(x for x in os.environ.get("TA_CEO_GRADES", "AB").upper() if x in "ABC") or ("A", "B")
+_STRICT_SEEN = set()
+
+def _strict_reject(g):
+    """None = اوکی؛ وگرنه متن دلیل ردشدن. فقط روی سیگنال نهایی (بعد از عامل‌ها) اعمال می‌شود."""
+    if not STRICT: return None
+    why = []
+    if USE_AGENTS and AG.get("wanted") and not AG.get("ok"): why.append("تیم عامل‌ها اجرا نشد" + (f" ({str(AG.get('err') or '')[:90]})" if AG.get("err") else ""))
+    if USE_AGENTS and CEO_ON:
+        v, gr = g.get("ceo_verdict"), str(g.get("ceo_grade") or "").upper()
+        if v != "GO": why.append("مدیرعامل GO نداد" + (f" ({v})" if v else f" (بی‌پاسخ: {str(AG.get('ceo_err') or 'اجرا نشد')[:90]})"))
+        elif gr not in CEO_GRADES: why.append(f"درجهٔ مدیرعامل {gr} است؛ حداقل لازم {'/'.join(CEO_GRADES)}")
+    if USE_AGENTS and str(g.get("smc_verdict") or "").upper() == "NO": why.append("ایجنت ICT/SMC رد کرد (NO)")
+    if STRICT_HARD and g.get("hard"): why.append("پرچم سخت: " + " | ".join(str(h)[:120] for h in list(g["hard"])[:2]))
+    return " ؛ ".join(why) or None
+
 def _notify_signal(since, from_watch=False):
     """بعد از پایان تحلیل: نتیجه (سیگنال یا نبودنش) را به گوشی می‌فرستد."""
     try:
         g = dict(LAST_SIG) if LAST_SIG else {}
         if g and str(g.get("t", "")) >= since:
             sd = "🟢 BUY (خرید)" if g.get("side") == 1 else "🔴 SELL (فروش)"
+            _rej = _strict_reject(g)
+            if _rej:      # v28: سیگنال کم‌کیفیت فرستاده نمی‌شود؛ کولداون آزاد می‌شود تا نوبت بعد دوباره بگردد
+                if g.get("t") in _STRICT_SEEN: return
+                _STRICT_SEEN.add(g.get("t")); _unlog_sig(g.get("side"))
+                print("🚫 سیگنال به‌خاطر گیت کیفیت ارسال نشد:", _rej)
+                _send_once(f"🚫 {ASSET} {sd}: سیگنال ارسال نشد (کیفیت)", f"{_asset_label()} · ورود {g.get('entry')} · SL {g.get('sl')}\nدلیل: {_rej}\nنوبت بعد دوباره می‌گردد.", 2, "no_entry_sign")
+                return
             _tier_emo = {"GOLD": "🥇", "STANDARD": "✅", "RISKY": "🔥"}.get(g.get("tier"), "🔷")
             line = "─" * 18
             try: _rrv = f"{abs(float(g['tp2']) - float(g['entry'])) / abs(float(g['entry']) - float(g['sl'])):.1f}".rstrip("0").rstrip(".")
@@ -3982,7 +4120,7 @@ def _wilson_lb(p, n, z=1.28):
     d = 1 + z * z / n; c0 = p + z * z / (2 * n); m = z * np.sqrt(max(p * (1 - p), 0) / n + z * z / (4 * n * n)); return float((c0 - m) / d)
 
 _LAB = {"v": None}
-LAB_VER = 6      # Ultimate: نسخهٔ منطق بک‌تست؛ کش قدیمی (ورود با کلوز و بدون کارمزد) خودکار کنار گذاشته می‌شود
+LAB_VER = 7      # v29: کش قبلی با آستانه‌های اعتبارسنجی جدید کنار گذاشته می‌شود
 _DEEP = [False]
 def _lab_days(): return STRAT_DAYS_ALL if (ALL_MODE and not _DEEP[0]) else STRAT_DAYS      # حالت ALL بک‌تست کوتاه‌تر
 def _min_n(): return STRAT_MIN_N if (not ALL_MODE or _DEEP[0]) else max(5, int(round(STRAT_MIN_N * STRAT_DAYS_ALL / max(1, STRAT_DAYS))))
@@ -4024,6 +4162,9 @@ def strat_score(L, k, ses):
     sa, ss = L["stats"][k]["all"], L["stats"][k]["ses"].get(ses, {"n": 0, "wr": 0.0, "E": 0.0, "pf": 0.0})
     if sa["n"] < _min_n(): return None
     so = L["stats"][k].get("oos") or {"n": 0, "wr": 0.0, "E": 0.0, "pf": 0.0}
+    # v29: بک‌تست فقط وقتی اجازهٔ انتخاب می‌دهد که بخش زمانیِ دست‌نخورده نمونهٔ کافی و expectancy مثبت داشته باشد.
+    # این فیلتر به‌ازای هر دارایی اعمال می‌شود؛ داده/نتیجهٔ Gold به BTC یا ETH تعمیم داده نمی‌شود.
+    if so["n"] < OOS_MIN_N or so["E"] <= 0: return None
     K = STRAT_SHRINK; n = ss["n"]; E = (n * ss["E"] + K * sa["E"]) / (n + K); wr = (n * ss["wr"] + K * sa["wr"]) / (n + K); lb = _wilson_lb(wr, n + K)
     sc = E if STRAT_RANK == "expectancy" else (lb - 0.5) if STRAT_RANK == "winrate" else E + (lb - 0.5)
     return {"E": E, "wr": wr, "lb": lb, "score": float(sc), "n_all": sa["n"], "n_ses": n, "wr_all": sa["wr"], "E_all": sa["E"], "pf_all": sa["pf"], "wr_ses": ss["wr"], "E_ses": ss["E"], "pf_ses": ss["pf"],
@@ -4085,7 +4226,8 @@ def strat_select(now, price, pin=None):
     L = strat_lab(quiet=True); ses = sess_now(); rows, meta = strat_scan(now, price); dsk = AG.get("strat_desk") or {}; pref = dsk.get("pref", {}); sels = []
     for r in rows:
         r["sc"] = strat_score(L, r["k"], ses) if r["run"] else None; r["team"] = float(pref.get(r["k"], 0.0))
-        if r["state"] == "ACTIVE": sels.append(r)
+        # v29: سیگنال فعالِ بدون بک‌تست OOS کافی/مثبت فقط دیده می‌شود، انتخاب و اجرا نمی‌شود.
+        if r["state"] == "ACTIVE" and r["sc"] is not None and r["sc"].get("oos_ok") is True: sels.append(r)
     def key(r): return (0.0 if r["sc"] is None else r["sc"]["score"]) + STRAT_TEAM_W * r["team"]
     sels.sort(key=key, reverse=True); pick = None; stale = False
     if pin:
@@ -4097,7 +4239,7 @@ def strat_select(now, price, pin=None):
     P = None
     if pick:
         sc = pick["sc"]; P = {"k": pick["k"], "n": pick["n"], "e": pick["e"], "side": pick["side"] or 0, "age": pick["age"], "state": pick["state"], "stale": bool(stale or pick["state"] in ("BROKEN", "LATE")), "detail": pick["detail"], "team": pick["team"],
-                              "score": None if sc is None else sc["score"], "sc": sc, "gold_ok": bool(sc is not None and sc["score"] >= STRAT_GOLD_SCORE and not stale and pick["state"] == "ACTIVE")}
+                              "score": None if sc is None else sc["score"], "sc": sc, "gold_ok": bool(sc is not None and sc.get("oos_ok") is True and sc["score"] >= STRAT_GOLD_SCORE and not stale and pick["state"] == "ACTIVE")}
         if P["side"] == 0: P = None
     alts = [r for r in sels if not P or r["k"] != P["k"]][:2]
     return {"rows": rows, "pick": P, "alts": alts, "session": ses, "meta": meta, "t": utcnow(), "lab": L is not None, "pin": pin}
@@ -4597,20 +4739,34 @@ try:
         AG["t0"] = utcnow(); _p0, _s0, _ = live_price(float("nan"))      # قیمت لحظهٔ شروع تحلیل (برای هشدار حرکت قیمت)
         AG["p0"] = None if (_p0 != _p0 or "⚠" in _s0) else _p0
         _agent_live(time.time())      # v21: کارت زندهٔ پیشرفت + پیش‌بینی زمان جواب (بدون چاپ‌های پشت‌سرهم)
-        res = run_agents_safe(AGENT_TIMEOUT_MIN)
+        _ag_t0 = time.time(); res = None; _ag_round = 0      # v28: خطای زودگذر (503...) = دور بعد؛ فقط اگر وقت مانده و خطا بود، نه Timeout
+        while True:
+            _ag_round += 1; _left = AGENT_TIMEOUT_MIN - (time.time() - _ag_t0) / 60
+            if _ag_round > 1 and _left < 2: break
+            _r0 = time.time(); res = run_agents_safe(max(2.0, _left))
+            if res or _ag_round >= AGENT_ROUNDS or (time.time() - _r0) >= max(2.0, _left) * 60 - 8: break
+            print(f"↻ تیم عامل‌ها دور {_ag_round} شکست خورد؛ {AGENT_ROUND_WAIT} ثانیه صبر و دور بعد ..."); time.sleep(AGENT_ROUND_WAIT)
         if res:
             side, rating, state = res; AG.update(ok=True, side=side, rating=rating, state=state, t=utcnow())
             print(f"عامل‌ها تمام کردند ({(time.time()-t0)/60:.1f} دقیقه). حالا داده و قیمت زنده گرفته می‌شود ...")
             notify(f"🧩 تیم عامل‌ها تمام شد · {ASSET}", "در حال ساخت سیگنال نهایی؛ چند دقیقهٔ دیگر.", 1, "gear")
         else: print("ادامه با تحلیل تکنیکال چندتایم‌فریم به‌جای عامل‌ها.")
         econ_prepare(); council_prepare(); strat_prepare()    # v15: بک‌تست ← آزمون ← انتخاب استراتژی؛ v12: اقتصاددان + v11: شورای ۱۴ نفره (برای اینکه اگر تیم «نگه‌دار» گفت، جهت از شورا هم بیاید)
+        if not AG["ok"] and LITE_AGENTS:      # v28: حالت سبک: تیم اصلی در دسترس نبود ← ICT/SMC و مدیرعامل با گزارش موتور کار کنند
+            try:
+                _n_l, _a_l = snapshot(); _pk_l = (AG.get("strat_sel") or {}).get("pick")
+                _sd_l = int(_pk_l["side"]) if _pk_l else int(decide(_n_l) or lean(_n_l))
+                if _sd_l and _a_l <= MAX_AGE_MIN:
+                    AG.update(ok=True, lite=True, side=_sd_l, state={}, t=utcnow(), rating=("Buy" if _sd_l == 1 else "Sell") + " (حالت سبک: تیم TradingAgents در دسترس نبود؛ جهت از استراتژی/تایم‌فریم‌ها)")
+                    print("🪶 حالت سبک: ICT/SMC و مدیرعامل با گزارش موتور اجرا می‌شوند (تیم اصلی در دسترس نبود).")
+            except Exception as _el: print(f"⚠ حالت سبک فعال نشد: {type(_el).__name__}: {str(_el)[:100]}")
         if AG["ok"] and AG["side"] == 0 and (M()["hold_override"] or TIERS_ON) and not (STRAT_ON and (AG.get("strat_sel") or {}).get("pick")): _hold_override()
         if not (STRAT_ON and STRAT_REQUIRED and not (AG.get("strat_sel") or {}).get("pick")): desk_prepare()    # (v15: بدون استراتژی فعال، تماس‌های گران مدل انجام نمی‌شود) ایجنت ICT/SMC ← مناظرهٔ تکنیکال×بنیادی ← مدیر سبد (قبل از پاک‌شدن خروجی، تا بلوک سیگنال بالا بماند)
         clear_output(wait=True)   # گزارش‌های «هنوز مشغولم» پاک می‌شوند تا بلوک سیگنال بالای خروجی باشد
     requote()
     if ALL_MODE: _all_show()
     _notify_signal(_run_start)
-    if USE_AGENTS and AG["ok"]:
+    if USE_AGENTS and AG["ok"] and not AG.get("lite"):
         show_details()
     if USE_AGENTS:
         try:

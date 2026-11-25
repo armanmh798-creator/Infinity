@@ -15,6 +15,12 @@ os.environ.setdefault("TA_COOLDOWN_H", "1")
 os.environ.setdefault("TA_TECH_AFTER", "2")      # بیشتر از ۱ یعنی ستاپ «فقط تکنیکال/کم‌اطمینان» هرگز پذیرفته نمی‌شود
 os.environ.setdefault("TA_MIN_PER_HOUR", "0")    # سیگنال ضعیفِ اجباری در انتهای ساعت ممنوع
 os.environ.setdefault("TA_REPO_DIR", os.path.join(HERE, "TradingAgents"))
+os.environ.setdefault("TA_STRICT", "1")           # v28: گیت سخت کیفیت
+os.environ.setdefault("TA_STRICT_HARD", "1")       # v29: پرچم‌های سخت همیشه مانع ارسال
+os.environ.setdefault("TA_LEAN", "0")              # v29: لایه‌های هماهنگ‌کننده/اقتصاددان/شورا در اجراهای مجهز به ایجنت روشن
+os.environ.setdefault("TA_REQUIRE_GO", "1")        # v29: تأیید صریح مدیرعامل برای مسیرهای مدلی
+os.environ.setdefault("TA_ANALYSTS", "market,social,news,fundamentals")  # تحلیل چندتخصصی
+os.environ.setdefault("TA_LITE_AGENTS", "1")       # v28: اگر تیم اصلی TradingAgents افتاد، ICT/SMC و مدیرعامل با گزارش موتور اجرا شوند
 LOGP = os.path.join(tempfile.gettempdir(), "ta_last_run.log")
 RUN_STARTED = time.time()
 
@@ -160,7 +166,7 @@ G = {"__name__": "ta_engine", "__file__": ENGINE, "_HEADLESS": True, "_DATA": DA
      "_RESCAN_SEC": float(os.environ.get("TA_RESCAN_SEC", "240") or 240),        # فاصلهٔ اسکن‌های پشت‌سرهم
      "_FINAL_FALLBACK": os.environ.get("TA_FINAL_FALLBACK", "0") == "1",         # پایان مهلت: بهترین گزینه با پرچم ریسک. پیش‌فرض خاموش (برای معاملهٔ خودکار: بی‌سیگنال بهتر از سیگنال ضعیف)
      "_MIN_LV": int(os.environ.get("TA_MIN_LV", "3") or 3),                      # حداقل پلهٔ اطمینان: ۴ = ۱:۳ کامل | ۳ = فضای ≥۸۵٪ ۱:۳ (پایین‌تر از ۳ هرگز نمی‌پذیرد)
-     "_REQUIRE_GO": False,                 # شرط GO مدیرعامل حذف شد؛ تصمیم نهایی همچنان تابع فیلترهای موتور است
+     "_REQUIRE_GO": os.environ.get("TA_REQUIRE_GO", "1") != "0",  # v29: رأی مدیرعامل در مسیر مدلی لازم است
      "_WR_W": float(os.environ.get("TA_WR_W", "1.0") or 1.0)}                    # وزن اضافهٔ حد پایین وین‌ریت در رتبه‌بندی
 
 
@@ -194,6 +200,10 @@ def _engine_src():
                      (r"^ALL_LLM_TOPK\s*=\s*\d+", f"ALL_LLM_TOPK = {max(0, _tk)}")):
         src, n = re.subn(pat, rep, src, count=1, flags=re.M)
         if n != 1: say(f"⚠ پچ تنظیمات موتور اعمال نشد: {pat[:20]}")
+    # چرخش کلید به‌ازای هر اجرا (به‌جای هر ساعت): شمارندهٔ اجرا از workflow می‌آید
+    if os.environ.get("TA_KEY_START", "").strip().isdigit():
+        src, n = re.subn(r"int\(time\.time\(\) // 3600\) % len\(_GKEYS\)", "int(os.environ.get('TA_KEY_START')) % len(_GKEYS)", src, count=1)
+        if n != 1: say("⚠ پچ چرخش کلید برای هر اجرا اعمال نشد")
     if os.environ.get("TA_EXTRA_STRATS", "1") != "0":      # بازگشت به میانگین (بولینگر+RSI) و مومنتوم (RSI+استوکاستیک) در موتور هستند ولی خاموش بودند؛ بک‌تست خودش بهترین را انتخاب می‌کند
         for k_ in ("meanrev", "mom"):
             src, n = re.subn(r'("%s": dict\(n="[^"]*", e="[^"]*", )run=False' % k_, r"\1run=True", src, count=1)
@@ -226,7 +236,7 @@ def _pre_signal_warning():
     run_state = G.get("_RUN", {})
     if isinstance(run_state, dict) and run_state.get("sent"):
         return  # سیگنال نهایی زودتر رسیده؛ هشدار آماده‌باش دیگر لازم نیست.
-    _ntfy("Infinity", "⏳ احتمالاً تا ۵ دقیقهٔ دیگر تحلیل به پایان می‌رسد و نتیجه/سیگنال آماده می‌شود؛ آماده باشید! 🚀", 4, ["hourglass", "bell"])
+    _ntfy("Infinity", "⏳ جست‌وجو نزدیک پایان است؛ اگر مدیرعامل تأیید کند سیگنال می‌آید، وگرنه این نوبت بی‌سیگنال تمام می‌شود (کیفیت مهم‌تر از تعداد).", 3, ["hourglass"])
 
 _prewarn_thread = threading.Thread(target=_pre_signal_warning, name="ntfy-pre-signal", daemon=True)
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
