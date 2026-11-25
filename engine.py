@@ -171,7 +171,7 @@ if LLM_PROVIDER != "rayegan":
         if _v and _v not in [x[1] for x in _GKEYS]: _GKEYS.append((_n, _v))
     if not _GKEYS:
         raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY (و در صورت وجود GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3) را در GitHub Secrets بگذارید.')
-    _GK = {'i': int(os.environ.get('GITHUB_RUN_NUMBER') or (time.time() // 300)) % len(_GKEYS), 'bad': {}, 'ex_t': 0.0, 'waited': False, 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
+    _GK = {'i': int(time.time() // 3600) % len(_GKEYS), 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
 
     class _NoModel(RuntimeError): pass                   # با این کلید هیچ مدل قابل‌استفاده‌ای نبود (سهمیه صفر/پر)
 
@@ -198,22 +198,19 @@ if LLM_PROVIDER != "rayegan":
         except Exception as e: print(f'⚠ اعلان کلید ارسال نشد ({type(e).__name__})')
 
     def _gk_rotate(reason='', used=None):
-        """کلید فعلی خطای سهمیه/دسترسی داد ← اولین کلیدی که در ۲ دقیقهٔ اخیر خراب نشده. True = کلید دیگری فعال شد؛ False = هر سه کلید همین الان خراب‌اند."""
+        """کلید فعلی خطای سهمیه/دسترسی داد ← کلید بعدی (۱→۲→۳→۱). True = کلید دیگری فعال شد (تماس را دوباره بزن)؛ False = چرخشی ممکن نیست یا همه پشت‌سرهم شکست خوردند."""
         with _GK['lock']:
-            if len(_GKEYS) < 2: return False
-            now = time.time()
-            if _GK['exhausted'] and now - _GK['ex_t'] < 120: return False
+            if len(_GKEYS) < 2 or _GK['exhausted']: return False
             if used is not None and used != _GK['i']: return True          # نخ دیگری همین حالا چرخانده؛ دوباره با کلید تازه امتحان کن
-            _GK['exhausted'] = False; old = _gk_name(); _GK['bad'][_GK['i']] = now
-            fresh = [j for j in range(1, len(_GKEYS)) if now - _GK['bad'].get((_GK['i'] + j) % len(_GKEYS), 0.0) > 120]
-            if not fresh:
-                _GK['exhausted'] = True; _GK['ex_t'] = now; _gk_alert(f'{old}: {reason}'); return False
-            _GK['i'] = (_GK['i'] + fresh[0]) % len(_GKEYS); _gk_apply()
+            _GK['streak'] += 1; old = _gk_name()
+            if _GK['streak'] >= len(_GKEYS):
+                _GK['exhausted'] = True; _gk_alert(f'{old}: {reason}'); return False
+            _GK['i'] = (_GK['i'] + 1) % len(_GKEYS); _gk_apply()
             print(f"🔁 {old} جواب نداد ({_scrub(reason)[:90]}) ← رفتم سراغ {_gk_name()}")
             return True
 
-    def _gk_ok():                                         # یک تماس موفق = حافظهٔ کلیدهای خراب پاک می‌شود
-        _GK['streak'] = 0; _GK['exhausted'] = False; _GK['bad'].clear(); _GK['notified'] = False
+    def _gk_ok():                                         # یک تماس موفق = زنجیرهٔ شکست‌ها صفر می‌شود
+        _GK['streak'] = 0; _GK['exhausted'] = False
 
     def _gk_is_key_error(e):
         """فقط خطاهای «کلید/سهمیه» باعث چرخش می‌شوند: 429، 401، 403 و 400 با پیام کلید نامعتبر. (خطای 5xx، Timeout و درخواست بد چرخش نمی‌دهند.)"""
@@ -288,7 +285,7 @@ if LLM_PROVIDER != "rayegan":
             _C._agenerate = _agen
         _C._gk_patched = True
 
-    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر اجرا (هر ۵ دقیقه) کلید بعدی: شمارهٔ اجرا ÷ تعداد کلیدها = چرخش ۱→۲→۳
+    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر ساعت کلید بعدی: ساعتِ UTC ÷ تعداد کلیدها؛ اجرای ساعتی = چرخش خودکار ۱→۲→۳
     print(f"🔄 کلید این اجرا: {_GKEYS[_GK['i']][0]} (از {len(_GKEYS)} کلید)")
     print(f"🔑 {len(_GKEYS)} کلید Gemini آماده است ({' ، '.join(n for n, _ in _GKEYS)})" + ("؛ با خطای سهمیه/دسترسی به‌ترتیب و چرخشی عوض می‌شوند." if len(_GKEYS) > 1 else "؛ برای چرخش GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3 را هم در Secrets و workflow بگذارید."))
     os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'google'
@@ -973,10 +970,7 @@ def run_agents():
         except Exception as e:
             errs.append(f"تلاش {k} ({day}): {type(e).__name__}: {str(e)[:350]}")
             print(f"⚠ {errs[-1][:260]}")
-            _g_ = globals().get("_GK", {})
-            if _g_.get("exhausted") and not _g_.get("waited"):
-                _g_["waited"] = True; print("⏳ هر سه کلید همزمان محدودیت خوردند؛ ۶۵ ثانیه صبر و تلاش دوباره."); time.sleep(65); _g_["exhausted"] = False; _g_["bad"].clear(); continue
-            if _g_.get("exhausted"): raise RuntimeError("همهٔ کلیدهای Gemini پشت‌سرهم خطا دادند (اعلان به گوشی رفت؛ کلید جدید اضافه کنید) | " + " | ".join(errs))
+            if globals().get("_GK", {}).get("exhausted"): raise RuntimeError("همهٔ کلیدهای Gemini پشت‌سرهم خطا دادند (اعلان به گوشی رفت؛ کلید جدید اضافه کنید) | " + " | ".join(errs))
             if use_cb and any(w in str(e).lower() for w in ("pickle", "lock", "callback", "deepcopy", "copy")):
                 use_cb = False; print("   مشکل از گزارش پیشرفت بود؛ بدون آن (فقط گزارش زمان) فوراً دوباره اجرا می‌شود ..."); continue
             if k < len(days):
@@ -1137,10 +1131,7 @@ def spot_price(ref=None, max_age=0, tol=0.015):
         except Exception: return (n, None)
     def ok(p): return bool(p) and (ref is None or ref != ref or abs(p - ref) <= tol * ref)
     got = []
-    _pn = os.environ.get("TA_SPOT_PRIMARY", "Swissquote")      # فقط یک منبع اصلی؛ میانگین‌گرفتن با GoldAPI/GoldPrice (کندتر) قیمت را از MT5 دور می‌کرد
-    _pri = [s for s in _SPOT_SRC if s[0] == _pn]; _rest = [s for s in _SPOT_SRC if s not in _pri]
-    for srcs in (_pri, _rest, _SPOT_FB):
-        if not srcs: continue
+    for srcs in (_SPOT_SRC, _SPOT_FB):
         with ThreadPoolExecutor(len(srcs)) as ex: got = [(n, p) for n, p in ex.map(one, srcs) if ok(p)]
         if got: break
     if not got: return None, ""
@@ -1193,7 +1184,7 @@ def _basis_store(off=None):
             with open(p, "w") as f_: json.dump({"off": float(off), "t": time.time()}, f_)
             return off
         j = json.load(open(p))
-        if time.time() - float(j["t"]) <= 8 * 3600: return float(j["off"])
+        if time.time() - float(j["t"]) <= 72 * 3600: return float(j["off"])
     except Exception: pass
     return None
 
@@ -3084,7 +3075,7 @@ def _auto_basis(chart, now):
     global PRICE_OFFSET
     if chart is None and AUTO_BASIS and ASSET == "Gold" and not (PRICE_OFFSET != 0 and not _OFF_AUTO[0]):      # headless: چارت دستی ندارد؛ اسپات لحظه‌ای مرجع است
         try:
-            _sp, _sn = spot_price(ref=float(now.c))
+            _sp, _sn = spot_price(ref=float(now.c), tol=0.08)      # v27: اسپات Swissquote معتبر است؛ فقط داده‌های مسخره (±۸٪) حذف شوند، نه حرکت تند بازار
             if _sp: chart = _sp; print(f"ℹ قیمت اسپات طلا ({_sn}): {_sp:.2f}")
             else: print("⚠ قیمت اسپات طلا از هیچ منبعی نیامد.")
         except Exception as _e: print(f"⚠ گرفتن اسپات طلا خطا داد ({type(_e).__name__})")
@@ -3095,20 +3086,26 @@ def _auto_basis(chart, now):
         _lg = _LAST_LAG[0]; _al = _spot_hist(near=time.time() - _lg * 60 + 60) if _lg <= 45 else None
         if _al is not None:
             _off = round(_al - p, 2)
-            if abs(_off) <= 0.011 * max(p, 1.0):
+            if abs(_off) <= 0.02 * max(p, 1.0):
                 PRICE_OFFSET = _off; _OFF_AUTO[0] = True; _basis_store(_off)
                 print(f"ℹ اختلاف اسپات−فیوچرز طلا {_off:+.2f} (اسپات هم‌زمان با کندل {_lg:.0f} دقیقه پیش)؛ سطوح در فضای اسپات هستند."); return
     if "⚠" in src or _LAST_LAG[0] > BASIS_MAX_LAG.get(ASSET, 3):
-        _o = _basis_store() if ASSET == "Gold" else None
-        if _o is not None: PRICE_OFFSET = _o; _OFF_AUTO[0] = True; print(f"ℹ آخرین معاملهٔ فیوچرز کهنه است؛ از آخرین اختلاف اسپات−فیوچرز ذخیره‌شده ({_o:+.2f}) استفاده شد."); return
-        if ASSET == "Gold" and "⚠" not in src and _LAST_LAG[0] <= 45 and chart is not None:      # آخرین راه: اسپات الان − آخرین کندل فیوچرز (خطا ≈ حرکت قیمت در این چند دقیقه، خیلی کمتر از ~۳۰$)
-            _off = round(float(chart) - p, 2)
-            if abs(_off) <= 0.011 * max(p, 1.0):
-                PRICE_OFFSET = _off; _OFF_AUTO[0] = True
-                print(f"ℹ اختلاف اسپات−فیوچرز طلا {_off:+.2f} (تقریبی؛ کندل فیوچرز {_LAST_LAG[0]:.0f} دقیقه پیش بود و تاریخچهٔ اسپات هنوز ندارم)."); return
-        print(f"⚠ اختلاف فیوچرز با چارت شما حساب نشد: آخرین معاملهٔ {sym} {'در دسترس نبود' if '⚠' in src else f'{_LAST_LAG[0]:.0f} دقیقه پیش بوده (ساعت کم‌معامله یا تأخیر داده)'}. افست قبلی ({PRICE_OFFSET:+.2f}) می‌ماند؛ اگر لازم شد PRICE_OFFSET را دستی (چارت − فیوچرز) بنویسید."); return
+        _st = _basis_store() if ASSET == "Gold" else None
+        _ap = None
+        if ASSET == "Gold" and "⚠" not in src and _LAST_LAG[0] <= 45 and chart is not None: _ap = round(float(chart) - p, 2)      # اسپات الان − آخرین کندل فیوچرز؛ خطا = حرکت قیمت در تأخیر yfinance
+        _tol = 0.004 * max(p, 1.0)
+        if _st is not None:
+            _use = _st
+            if _ap is not None and abs(_ap - _st) <= _tol: _use = round((_st + _ap) / 2, 2); _basis_store(_use)      # تخمین تازه فقط وقتی با اختلاف ذخیره‌شده می‌خواند (حرکت تند آلودهٔ آن نکرده)
+            PRICE_OFFSET = _use; _OFF_AUTO[0] = True
+            print(f"ℹ فیوچرز {_LAST_LAG[0]:.0f} دقیقه کهنه است؛ از اختلاف اسپات−فیوچرز ذخیره‌شده ({_use:+.2f}) استفاده شد" + (f" (تخمین لحظه‌ای {_ap:+.2f} به‌خاطر حرکت تند قیمت نادیده گرفته شد)." if (_ap is not None and abs(_ap - _st) > _tol) else "."))
+            return
+        if _ap is not None and abs(_ap) <= 0.011 * max(p, 1.0):
+            PRICE_OFFSET = _ap; _OFF_AUTO[0] = True; _basis_store(_ap)
+            print(f"ℹ اختلاف اسپات−فیوچرز طلا {_ap:+.2f} (تقریبی؛ کندل فیوچرز {_LAST_LAG[0]:.0f} دقیقه پیش بود و اختلاف ذخیره‌شده‌ای ندارم)."); return
+        print(f"⚠ اختلاف فیوچرز با اسپات حساب نشد: آخرین معاملهٔ {sym} {'در دسترس نبود' if '⚠' in src else f'{_LAST_LAG[0]:.0f} دقیقه پیش بوده'}" + (f" و اختلاف تقریبی {_ap:+.2f} غیرعادی است (حرکت تند قیمت)" if _ap is not None else "") + ". بدون تبدیل، سیگنال طلا ارسال نمی‌شود."); return
     off = round(float(chart) - p, max(PXD, 2))
-    if abs(off) > 0.011 * max(p, 1.0): print(f"⚠ اختلاف {off:+.2f} غیرعادی است؛ اعمال نشد (قیمت چارت را چک کنید)."); return
+    if abs(off) > 0.02 * max(p, 1.0): print(f"⚠ اختلاف {off:+.2f} غیرعادی است؛ اعمال نشد (قیمت چارت را چک کنید)."); return
     PRICE_OFFSET = off; _OFF_AUTO[0] = True
     if ASSET == "Gold": _basis_store(off)
     print(f"ℹ اختلاف خودکار چارت شما − منبع داده ({sym}): {off:+.2f}؛ همهٔ اعداد زیر در فضای چارت شما هستند.")
@@ -3572,8 +3569,13 @@ def news_watch_start():
 def _final_px(g):
     """درست لحظهٔ ارسال: قیمت زنده را دوباره می‌گیرد (طلا: اسپات) و فاصلهٔ آن تا ورود را نشان می‌دهد؛ اگر قیمت از ورود/SL/TP1 رد شده باشد هشدار می‌دهد. خروجی: (متن، باطل‌شده؟)"""
     side = int(g.get("side") or 0); e, sl, tp1 = float(g["entry"]), float(g["sl"]), float(g["tp1"])
+    if ASSET == "Gold" and PRICE_OFFSET == 0 and not _OFF_AUTO[0]:      # v27: تبدیل فیوچرز→اسپات انجام نشده؛ سطوح در فضای GC=F (کهنه) است و با چارت اسپات نمی‌خواند
+        try: _sp0, _sn0 = spot_price()
+        except Exception: _sp0, _sn0 = None, ""
+        return (f"⛔ اختلاف فیوچرز و اسپات این نوبت قابل‌اعتماد حساب نشد؛ سطوح در فضای فیوچرز GC=F است" + (f" و اسپات الان {_sp0:.2f} است ({_sn0})" if _sp0 else "") + ". برای جلوگیری از ورود اشتباه ارسال نشد؛ نوبت بعد دوباره تلاش می‌شود."), True
     pf, sf, _ = live_price(float("nan"))
     if pf != pf or "⚠" in sf: return "", False
+    if ASSET == "Gold" and _LAST_LAG[0] > BASIS_MAX_LAG["Gold"]: return f"⛔ قیمت زندهٔ اسپات طلا نیامد و قیمت جایگزین {_LAST_LAG[0]:.0f} دقیقه کهنه است؛ اعتبار ورود قابل‌سنجش نیست. ارسال نشد؛ نوبت بعد دوباره تلاش می‌شود.", True
     p = pf + PRICE_OFFSET; risk = abs(e - sl) or 1e-9
     L = [f"🕒 {utcnow() + dt.timedelta(hours=TZ_HOURS):%H:%M:%S} · 💰 قیمت لحظهٔ ارسال: {p:.{PXD}f} ({sf})"]
     if ASSET == "Gold" and PRICE_OFFSET == 0 and not _OFF_AUTO[0]:
@@ -3582,6 +3584,7 @@ def _final_px(g):
     bad = False
     if side * (p - sl) <= 0: L.append("⛔ قیمت از حد ضرر رد شده؛ این سیگنال باطل است، ورود نگذارید."); bad = True
     elif side * (tp1 - p) <= 0: L.append("⛔ قیمت به تارگت ۱ رسیده؛ دیر شده، ورود نگذارید."); bad = True
+    elif side * (e - p) > 0 and abs(e - p) > 2 * risk: L.append(f"⛔ ورود {abs(e - p):.{PXD}f} ({abs(e - p) / risk:.1f}R) از قیمت لحظه‌ای دور است؛ تا یک ساعت عملاً پر نمی‌شود. ارسال نشد؛ نوبت بعد دوباره تلاش می‌شود."); bad = True
     elif side * (p - e) < 0: L.append(f"⚠️ قیمت {abs(e - p):.{PXD}f} از ناحیهٔ ورود رد شده؛ لیمیت همین الان پر می‌شود (مثل مارکت). فاصله تا SL فقط {abs(p - sl):.{PXD}f} است؛ با اعداد واقعی ریسک را بسنجید.")
     else:
         L.append(f"📏 ورود {abs(e - p):.{PXD}f} {'پایین‌تر' if side == 1 else 'بالاتر'} از قیمت لحظه‌ای است ({abs(e - p) / risk:.1f}R)." + (" ⚠️ بیش از ۱R دور است؛ ممکن است پر نشود." if abs(e - p) > risk else ""))
@@ -3606,7 +3609,10 @@ def _notify_signal(since, from_watch=False):
             try:      # لحظهٔ ارسال: قیمت زنده دوباره گرفته می‌شود تا سیگنال کهنه نباشد
                 _fin, _bad = _final_px(g)
                 if _fin: msg = msg.replace(line + "\n🏅", line + "\n" + _fin + "\n" + line + "\n🏅", 1)
-                if _bad: msg = "🚨 سیگنال از اعتبار افتاده 🚨\n" + msg
+                if _bad:      # v27: سیگنال باطل/غیرقابل‌اعتماد دیگر فرستاده نمی‌شود؛ فقط یک اطلاع کوتاه و آزاد شدن کولداون
+                    _unlog_sig(g.get("side"))
+                    _send_once(f"🚫 سیگنال {ASSET} لغو شد (قیمت با سطوح نمی‌خواند)", f"{_asset_label()} {sd}\n{_fin}\nورود: {g.get('entry')} · SL: {g.get('sl')} · TP1: {g.get('tp1')}", 3, "no_entry")
+                    print("🚫 سیگنال به‌خاطر گیت قیمت لحظه‌ای ارسال نشد."); return
             except Exception as _fe: print(f"⚠ تازه‌سازی قیمت لحظهٔ ارسال ناموفق: {type(_fe).__name__}")
             try:      # v25: ریسک ثابت؛ حجم از روی فاصلهٔ SL
                 _ru = abs(float(g["entry"]) - float(g["sl"])); _un = RISK_USD / _ru
@@ -3628,6 +3634,19 @@ def _notify_signal(since, from_watch=False):
 # ================= v19.1: ثبت سیگنال‌ها برای تشخیص هم‌جهتی + تشخیص شوک سراسری =================
 SIG_LOG_PATH = JOURNAL_PATH.rsplit(".", 1)[0] + "_signals.jsonl"
 _SIG_SEEN = set()
+def _unlog_sig(side):
+    """آخرین ثبت همین دارایی و جهت را از لاگ سیگنال‌ها حذف می‌کند تا سیگنالِ ارسال‌نشده کولداون نسازد."""
+    try:
+        side = int(side or 0)
+        for k in list(_SIG_SEEN):
+            if k[0] == ASSET and k[1] == side: _SIG_SEEN.discard(k)
+        L = open(SIG_LOG_PATH, encoding="utf-8").read().splitlines()
+        for i in range(len(L) - 1, -1, -1):
+            try: x = json.loads(L[i])
+            except Exception: continue
+            if x.get("asset") == ASSET and int(x.get("side", 0)) == side: del L[i]; break
+        with open(SIG_LOG_PATH, "w", encoding="utf-8") as fh: fh.write("\n".join(L) + ("\n" if L else ""))
+    except Exception: pass
 def _sig_log(side):
     k = (ASSET, int(side), int(time.time() // 1200))
     if k in _SIG_SEEN: return
