@@ -164,7 +164,7 @@ if LLM_PROVIDER != "rayegan":
     # ── چرخش کلیدها (v24): GOOGLE_API_KEY ← اگر خطای سهمیه/دسترسی داد ← GOOGLE_API_KEY_2 ← GOOGLE_API_KEY_3 ← دوباره اولی ──
     # اگر هر سه کلید «پشت‌سرهم» شکست بخورند (یعنی بین‌شان هیچ تماس موفقی نبوده)، یک اعلان فوری به گوشی می‌رود تا کلید جدید اضافه کنید.
     import threading as _th
-    _GK_NAMES = ['GOOGLE_API_KEY', 'GOOGLE_API_KEY_2', 'GOOGLE_API_KEY_3']
+    _GK_NAMES = ['GOOGLE_API_KEY'] + [f'GOOGLE_API_KEY_{_i}' for _i in range(2, 11)]
     _GKEYS = []                                          # [(نام Secret، مقدار)] به همین ترتیب؛ خالی یا تکراری حذف می‌شود
     for _n in _GK_NAMES:
         _v = _rg_secret(_n)
@@ -2871,7 +2871,7 @@ def grade_signal(now, side, plan):
     except Exception: p1 = None
     if p1 is not None: v_ = max(0.0, min(15.0, (p1 - 40) / 60 * 15)); sc += v_; parts.append(f"احتمال TP1 مدیر سبد {p1:.0f}٪: +{v_:.0f}")
     if plan.get("rev"): sc += 10; parts.append("سوییپ+MSS هم‌جهت: +10")
-    if AG["wanted"] and not AG["ok"]: flags.append("تیم عامل‌ها اجرا نشد؛ جهت فقط از اکثریت تایم‌فریم‌هاست")
+    if AG["wanted"] and not AG["ok"]: flags.append("تیم عامل‌ها اجرا نشد؛ جهت فقط از اکثریت تایم‌فریم‌هاست" + (f" · علت: {str(AG.get('err') or 'نامشخص')[:160]}" if True else ""))
     if al < MIN_ALIGN: flags.append(f"هم‌جهتی تایم‌فریم‌ها کم است ({al:+d})")
     if not flags: sc += 5
     cp = plan.get("council") or {}; ck = AG.get("ceo") or {}; rr_ = plan.get("rr_room"); sp_ = plan.get("strat") or {}
@@ -3417,6 +3417,17 @@ def journal_seed_v14():
 
 try: journal_seed_v14()      # ایدمپوتنت: اگر قبلاً ثبت شده باشد کاری نمی‌کند
 except Exception as _e14: print(f"⚠ ثبت نمونه‌های v14 در ژورنال انجام نشد: {type(_e14).__name__}")
+
+def journal_seed_v15():
+    """ترید زندهٔ طلا (XAUUSD SELL 0.02 لات، ۲۵ نوامبر ۲۰۲۶، MT5 تیکت 15166952): لیمیت سیگنال ۱۹:۴۱ تهران پر شد و روی SL بسته شد (−۴۴٫۴۰$ = −۱R). ایدمپوتنت: با ورود+خروج+لات شناسایی می‌شود. سیگنال: امتیاز ۲۳/۱۰۰، رده RISKY، استراتژی شکست دونچین، تیم عامل‌ها اجرا نشده بود (جهت فقط از اکثریت تایم‌فریم‌ها)."""
+    if any((x.get("entry"), x.get("exit"), x.get("lots")) == (3458.44, 3480.64, 0.02) for x in _jread()): return
+    journal_add(dict(asset="Gold", instrument="XAUUSD", price_space="spot", rating="live MT5 history", source="seed1125b", agents_ok=False, t_tz="MT5 server time",
+                     side=-1, lots=0.02, entry=3458.44, exit=3480.64, sl=3480.64, tp1=3412.81, tp2=3389.99, pnl_usd=-44.40, charges_usd=-0.08, R=-1.0, outcome="SL",
+                     t="2026-11-25T17:06:07", t_open="2026-11-25T16:24:38", ticket=15166952, score=23, grade="RISKY", strategy="Donchian breakout",
+                     note="سیگنال ۱۹:۴۱ تهران با امتیاز ۲۳/۱۰۰ (RISKY) و بدون تیم عامل‌ها (جهت فقط از اکثریت تایم‌فریم‌ها) ارسال شد؛ لیمیت ۸ دلار بالاتر از قیمت لحظه‌ای پر شد و بعد از ~۴۲ دقیقه روی SL بسته شد. عامل‌ها به‌خاطر سقف ۷ دقیقه‌ای TA_AGENT_MIN اجرا نشده بودند."))
+
+try: journal_seed_v15()
+except Exception as _e15: print(f"⚠ ثبت ترید v15 در ژورنال انجام نشد: {type(_e15).__name__}")
 
 def journal_stats():
     rows = [x for x in _jread() if x.get("R") is not None]
