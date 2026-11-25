@@ -89,7 +89,7 @@ def _journal_count():
 
 
 def _scrub(t):
-    for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
+    for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
         v = os.environ.get(k, "")
         if v: t = str(t).replace(v, "***")
     return str(t)
@@ -230,7 +230,7 @@ def _pre_signal_warning():
 
 _prewarn_thread = threading.Thread(target=_pre_signal_warning, name="ntfy-pre-signal", daemon=True)
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
-if os.environ.get("TA_AGENTS", "0") != "0" and not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3")): say("⚠ هر سه کلید GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
+if os.environ.get("TA_AGENTS", "0") != "0" and not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10")): say("⚠ همهٔ کلیدهای GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
 else:
     try:
         _prewarn_thread.start()
