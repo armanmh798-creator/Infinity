@@ -9,6 +9,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.join(HERE, "engine.py")
 DATA = os.environ.get("TA_DATA") or os.path.join(HERE, "data")
 os.makedirs(DATA, exist_ok=True)
+# پیش‌فرض‌ها: طلا، سخت‌گیری روی دقت (بدون سیگنال اجباری/ضعیف)، کولداون یک‌ساعته برای سیگنال ساعتی
+if not os.environ.get("TA_ASSET", "").strip(): os.environ["TA_ASSET"] = "Gold"
+os.environ.setdefault("TA_COOLDOWN_H", "1")
+os.environ.setdefault("TA_TECH_AFTER", "2")      # بیشتر از ۱ یعنی ستاپ «فقط تکنیکال/کم‌اطمینان» هرگز پذیرفته نمی‌شود
+os.environ.setdefault("TA_MIN_PER_HOUR", "0")    # سیگنال ضعیفِ اجباری در انتهای ساعت ممنوع
 os.environ.setdefault("TA_REPO_DIR", os.path.join(HERE, "TradingAgents"))
 LOGP = os.path.join(tempfile.gettempdir(), "ta_last_run.log")
 RUN_STARTED = time.time()
@@ -146,11 +151,11 @@ G = {"__name__": "ta_engine", "__file__": ENGINE, "_HEADLESS": True, "_DATA": DA
      "_REQUIRE_GO": False,                 # شرط GO مدیرعامل حذف شد؛ تصمیم نهایی همچنان تابع فیلترهای موتور است
      "_WR_W": float(os.environ.get("TA_WR_W", "1.0") or 1.0)}                    # وزن اضافهٔ حد پایین وین‌ریت در رتبه‌بندی
 
-os.environ.setdefault("TA_AGENTS", "0")  # پیش‌فرض: تیم کامل ایجنت‌ها، نه فقط تحلیل تکنیکال
+os.environ.setdefault("TA_AGENTS", "1")  # پیش‌فرض: تیم کامل ایجنت‌ها (فیلتر دقیق‌تر)
 rc, status = 0, "ok"
 t0 = time.time()
 _before_signals = _journal_count()
-_ntfy("Infinity", f"🟢 شروع اسکن Infinity\nدارایی: {os.environ.get('TA_ASSET', 'ALL')}\nزمان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t0))}", 3, ["rocket"])
+_ntfy("Infinity", f"🟢 شروع اسکن Infinity\nدارایی: {os.environ.get('TA_ASSET', 'Gold')}\nزمان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t0))}", 3, ["rocket"])
 
 # هشدار آماده‌باش: پنج دقیقه مانده به پایان مهلت جست‌وجوی موتور، مگر اینکه سیگنال زودتر ارسال شده باشد.
 _prewarn_stop = threading.Event()
@@ -193,7 +198,7 @@ duration = (time.time() - t0) / 60
 _after_signals = _journal_count()
 _new_signals = max(0, _after_signals - _before_signals)
 summary = (f"وضعیت: {status}\nمدت اجرا: {duration:.1f} دقیقه\n"
-           f"دارایی درخواستی: {os.environ.get('TA_ASSET', 'ALL')}\n"
+           f"دارایی درخواستی: {os.environ.get('TA_ASSET', 'Gold')}\n"
            f"رکورد سیگنال جدید در ژورنال: {_new_signals}\n"
            f"زمان پایان UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())}")
 # گزارش متنیِ قابل دریافت به‌عنوان Artifact در پایان هر اجرا
