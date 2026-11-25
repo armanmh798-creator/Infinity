@@ -30,11 +30,11 @@ jobs:
     env:
       TA_AGENTS: ${{ github.event.inputs.agents || vars.TA_AGENTS_DEFAULT || '1' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: data
           key: ta-data-${{ github.run_id }}
@@ -77,15 +77,16 @@ jobs:
           TA_MIN_PER_HOUR: "0"
           TA_TECH_AFTER: "0.5"     # بعد از نیمهٔ مهلت، ستاپ تکنیکالِ خوب هم پذیرفته می‌شود
           TA_COOLDOWN_H: "1"
+          TA_LIVE_SEC: "30"        # قبل از ارسال، ۳۰ ثانیه قیمت زنده آپدیت می‌شود و سیگنال با آخرین قیمت فرستاده می‌شود
           TA_DATA: ${{ github.workspace }}/data
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: infinity-report-${{ github.run_id }}
           path: data/
           if-no-files-found: warn
           retention-days: 14
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v5
         if: always()
         with:
           path: data
