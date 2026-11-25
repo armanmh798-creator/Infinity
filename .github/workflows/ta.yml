@@ -33,7 +33,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 120
     env:
       TA_AGENTS: ${{ github.event.inputs.agents || vars.TA_AGENTS_DEFAULT || '1' }}
     steps:
@@ -72,14 +72,27 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
+          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
+          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
+          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
+          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
+          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
+          TA_KEY_START: ${{ github.run_number }}   # هر اجرا (دستی یا خودکار) از کلید بعدی شروع می‌شود: ۱→۲→…→۱۰→۱
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
           TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '60' }}
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
           TA_REQUIRE_GO: "0"
-          TA_FINAL_FALLBACK: "1"   # پایان مهلت: بهترین گزینه با پرچم ریسک فرستاده می‌شود (همیشه سیگنال)
-          TA_AGENT_MIN: "12"       # سقف زمان تیم ایجنت‌ها (تحلیل کامل ۶ تا ۱۲ دقیقه طول می‌کشد؛ ۷ کم بود)
+          TA_FINAL_FALLBACK: "0"   # v28: خاموش؛ ۴ سیگنالِ اجباریِ امتیاز ۰ پشت‌سرهم استاپ خوردند. بی‌سیگنال بهتر از سیگنال بد (برای برگشت: "1")
+          TA_STRICT: "1"           # v28: گیت کیفیت: بدون GO مدیرعامل (درجه A/B) و بدون پرچم سخت، سیگنال ارسال نمی‌شود (۰ = رفتار قبلی)
+          TA_CEO_GRADES: "AB"      # v28: درجه‌های قابل‌قبول مدیرعامل (AB = فقط A و B)
+          TA_LITE_AGENTS: "1"      # v28: اگر تیم اصلی TradingAgents افتاد (مثلاً 503 گوگل)، ICT/SMC و مدیرعامل با گزارش موتور باز هم کار می‌کنند
+          TA_AGENT_ROUNDS: "2"     # v28: تیم اصلی با خطای زودگذر تا ۲ دور (در سقف TA_AGENT_MIN) دوباره اجرا می‌شود
+          TA_LLM_BUDGET_SEC: "180" # v28: سقف انتظار هر تماس مدلی (صبر + مدل جایگزین + کلید بعدی) قبل از تسلیم
+          TA_AGENT_MIN: "18"       # سقف زمان تیم ایجنت‌ها (۷ دقیقه کم بود و تیم نیمه‌کاره قطع می‌شد)؛ بیشتر شد بدون ایجنت ادامه می‌دهد
           TA_LLM_TOPK: "0"         # ایجنت‌ها وسط جست‌وجو دروازه‌بان نیستند
           TA_MIN_PER_HOUR: "0"
           TA_TECH_AFTER: "0.5"     # بعد از نیمهٔ مهلت، ستاپ تکنیکالِ خوب هم پذیرفته می‌شود
@@ -88,7 +101,6 @@ jobs:
           TA_MAX_PER_HOUR: "999"
           TA_SPOT_ADJ: ${{ vars.TA_SPOT_ADJ || '0' }}      # اختلاف بروکر شما با منبع عمومی؛ در Settings→Variables بگذارید
           TA_COOLDOWN_H: ${{ github.event_name == 'workflow_dispatch' && '0' || vars.TA_COOLDOWN_H || '1' }}
-          TA_SPOT_PRIMARY: "Swissquote"   # منبع اصلی قیمت لحظه‌ای؛ فقط اگر نیامد بقیه منابع
           TA_LIVE_SEC: "30"        # قبل از ارسال، ۳۰ ثانیه قیمت زنده آپدیت می‌شود و سیگنال با آخرین قیمت فرستاده می‌شود
           TA_DATA: ${{ github.workspace }}/data
       - uses: actions/upload-artifact@v7
