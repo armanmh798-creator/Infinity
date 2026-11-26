@@ -12,18 +12,22 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_TEST_CODE: ${{ secrets.TELEGRAM_TEST_CODE }}
     steps:
-      - name: Verify bot and optionally send a private test message
+      - name: Verify bot and send a private test message if configured
         run: |
           python3 - <<'PY'
           import json
           import os
+          import re
           import sys
+          import time
           import urllib.parse
           import urllib.request
 
           token = os.environ['TELEGRAM_BOT_TOKEN'].strip()
           chat_id = os.environ['TELEGRAM_CHAT_ID'].strip()
+          code = os.environ['TELEGRAM_TEST_CODE'].strip()
           if not token:
               sys.exit('TELEGRAM_BOT_TOKEN is not configured.')
 
@@ -39,14 +43,30 @@ jobs:
                   pass
               sys.exit(f'Telegram API request failed: {method}. No credentials logged.')
 
-          bot = call('getMe')
-          if bot.get('username', '').lower() != 'infinity070moneybot':
+          if call('getMe').get('username', '').lower() != 'infinity070moneybot':
               sys.exit('The token belongs to a different bot.')
           print('Telegram verified @Infinity070MoneyBot.')
+
+          if not chat_id and code:
+              if not re.fullmatch(r'[A-Za-z0-9]{12,64}', code):
+                  sys.exit('Use a random test code of 12–64 English letters or digits.')
+              if call('getWebhookInfo').get('url'):
+                  sys.exit('An existing webhook is configured; use TELEGRAM_CHAT_ID instead. No webhook was changed.')
+              cutoff = int(time.time()) - 900
+              matches = set()
+              for update in call('getUpdates', limit=100, timeout=0):
+                  message = update.get('message', {})
+                  chat = message.get('chat', {})
+                  if chat.get('type') == 'private' and message.get('date', 0) >= cutoff and message.get('text') == '/test ' + code:
+                      matches.add(str(chat.get('id', '')))
+              if len(matches) != 1:
+                  sys.exit('No unique recent private test command found. Send /test followed by your test code and rerun.')
+              chat_id = matches.pop()
+
           if not chat_id:
-              print('No TELEGRAM_CHAT_ID configured; no message was sent.')
+              print('Bot verified; no destination configured, so no message was sent.')
           elif not chat_id.isascii() or not chat_id.isdecimal() or int(chat_id) <= 0:
-              sys.exit('TELEGRAM_CHAT_ID must be a positive private-chat ID.')
+              sys.exit('The destination must be a positive private-chat ID.')
           else:
               call('sendMessage', chat_id=chat_id, text='اتصال برقرار شد ✅')
               print('Private test message sent.')
