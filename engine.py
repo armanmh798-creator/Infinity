@@ -1,9 +1,9 @@
-# TradingAgents · موتور واحد v26. همین کد هم در گیت‌هاب (run.py) و هم در سلول ۲ نوت‌بوک کولب اجرا می‌شود؛ هر تغییری فقط یک‌بار و همین‌جا داده شود.
+# Infinity Trader v36 · موتور واحد چندمدلی. همین کد هم در گیت‌هاب (run.py) و هم در سلول ۲ نوت‌بوک کولب اجرا می‌شود؛ هر تغییری فقط یک‌بار و همین‌جا داده شود.
 import os, re, time, json, getpass, requests
 
-LLM_PROVIDER = "google"      # "google" = Gemini (پیش‌فرض) | "rayegan" = مدل‌های رایگان از چند سرویس (v22)
+LLM_PROVIDER = os.environ.get("TA_LLM_PROVIDER", "anthropic").strip().lower()  # Claude Sonnet/Haiku موتور اصلی؛ Gemini پشتیبان
 LLM_PROVIDER = str(LLM_PROVIDER).strip().lower()
-if LLM_PROVIDER not in ("google", "rayegan"): raise ValueError('LLM_PROVIDER باید "google" یا "rayegan" باشد')
+if LLM_PROVIDER not in ("anthropic", "1xai", "grok", "google", "rayegan"): raise ValueError('TA_LLM_PROVIDER باید 1xai، anthropic، grok، google یا rayegan باشد')
 import warnings; warnings.filterwarnings("ignore")
 from IPython.display import display, HTML
 
@@ -171,7 +171,9 @@ if LLM_PROVIDER != "rayegan":
         if _v and _v not in [x[1] for x in _GKEYS]: _GKEYS.append((_n, _v))
     if not _GKEYS:
         raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY (و در صورت وجود GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3) را در GitHub Secrets بگذارید.')
-    _GK = {'i': int(time.time() // 3600) % len(_GKEYS), 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
+    _run_no = os.environ.get('GITHUB_RUN_NUMBER', '')
+    _rotation_seed = int(_run_no) if str(_run_no).isdigit() else int(time.time() // 3600)
+    _GK = {'i': _rotation_seed % len(_GKEYS), 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
 
     class _NoModel(RuntimeError): pass                   # با این کلید هیچ مدل قابل‌استفاده‌ای نبود (سهمیه صفر/پر)
 
@@ -379,8 +381,8 @@ if LLM_PROVIDER != "rayegan":
             _C._agenerate = _agen
         _C._gk_patched = True
 
-    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر ساعت کلید بعدی: ساعتِ UTC ÷ تعداد کلیدها؛ اجرای ساعتی = چرخش خودکار ۱→۲→۳
-    print(f"🔄 کلید این اجرا: {_GKEYS[_GK['i']][0]} (از {len(_GKEYS)} کلید)")
+    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر اجرای GitHub: GITHUB_RUN_NUMBER برای انتخاب کلید بعدی؛ خطای quota نیز باعث چرخش فوری می‌شود
+    print(f"🔄 کلید پشتیبان این اجرا: {_GKEYS[_GK['i']][0]} (از {len(_GKEYS)} کلید؛ چرخش برای توزیع/پایداری است، نه افزایش سهمیهٔ یک پروژه)")
     print(f"🔑 {len(_GKEYS)} کلید Gemini آماده است ({' ، '.join(n for n, _ in _GKEYS)})" + ("؛ با خطای سهمیه/دسترسی به‌ترتیب و چرخشی عوض می‌شوند." if len(_GKEYS) > 1 else "؛ برای چرخش GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3 را هم در Secrets و workflow بگذارید."))
     os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'google'
     os.environ['TRADINGAGENTS_MAX_DEBATE_ROUNDS'] = '2'
@@ -576,6 +578,36 @@ if LLM_PROVIDER != "rayegan":
     except Exception:
         pass
     _msg('#30a46c', f"✅ آماده · مدیران: {DEEP} · بقیه: {QUICK} · سطح تفکر: {_lvl}. سلول ۲ را اجرا کنید (۵ تا ۱۰ دقیقه؛ در حالت ALL چند دقیقه بیشتر).")
+
+    # Claude Sonnet برای deep و Haiku برای quick؛ Gemini فقط مسیر پشتیبان است.
+    if LLM_PROVIDER in ("anthropic", "1xai"):
+        _claude_api = _rg_secret("ONE_XAI_API_KEY") if LLM_PROVIDER == "1xai" else _rg_secret("ANTHROPIC_API_KEY")
+        if not _claude_api: raise RuntimeError(("ONE_XAI_API_KEY" if LLM_PROVIDER == "1xai" else "ANTHROPIC_API_KEY") + " در GitHub Secrets تنظیم نشده است؛ موتور Claude اجرا متوقف شد.")
+        _sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5").strip() or "claude-sonnet-5-5"
+        _haiku = os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5").strip() or "claude-haiku-5-5"
+        os.environ["ANTHROPIC_API_KEY"] = _claude_api
+        if LLM_PROVIDER == "1xai":
+            os.environ["ANTHROPIC_BASE_URL"] = os.environ.get("CLAUDE_BASE_URL", "https://1xai.ir/anthropic").rstrip("/")
+        os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "anthropic"
+        os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _sonnet
+        os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _haiku
+        os.environ["TRADINGAGENTS_ANTHROPIC_EFFORT"] = os.environ.get("CLAUDE_SONNET_EFFORT", "medium")
+        print(f"🤖 مدل‌های اصلی: کارهای عمیق/حساس={_sonnet}؛ کارهای سریع و پرتکرار={_haiku}؛ Gemini فقط پشتیبان است.")
+
+    # Grok موتور اصلی برای تیم کامل TradingAgents؛ Gemini مسیر پشتیبان است.
+    if LLM_PROVIDER == "grok":
+        _gk_api = _rg_secret("GROK_API_KEY")
+        if not _gk_api: raise RuntimeError("GROK_API_KEY در GitHub Secrets تنظیم نشده است؛ Grok موتور اصلی است و اجرا متوقف شد.")
+        _grok_base = os.environ.get("GROK_BASE_URL", "https://api.x.ai/v1").strip().rstrip("/")
+        if not _grok_base.startswith("https://"): raise RuntimeError("GROK_BASE_URL باید آدرس HTTPS معتبر API باشد.")
+        _grok_model = os.environ.get("GROK_MODEL", "grok-4.7").strip() or "grok-4.7"
+        os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "openai_compatible"
+        os.environ["TRADINGAGENTS_LLM_BACKEND_URL"] = _grok_base
+        os.environ["OPENAI_COMPATIBLE_API_KEY"] = _gk_api
+        os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _grok_model
+        os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _grok_model
+        os.environ["TA_GROK_MODEL"] = _grok_model
+        print(f"🤖 موتور اصلی: Grok ({_grok_model})؛ Gemini برای fallback آماده است.")
 
 
 # ======================= موتور تحلیل =======================
@@ -1063,11 +1095,39 @@ def run_agents():
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.graph.trading_graph import TradingAgentsGraph
     today, errs = utcnow().date(), []; PROG.reset(); use_cb = True
+    use_compat = (LLM_PROVIDER == "grok")
+    use_anthropic = (LLM_PROVIDER in ("anthropic", "1xai"))
     days = [today] * (1 + AGENT_RETRIES) + [today - dt.timedelta(days=1)]   # چند تلاش برای امروز؛ آخرین شانس: تاریخ دیروز
     for k, day in enumerate(days, 1):
         try:
             cfg = DEFAULT_CONFIG.copy(); cfg["max_debate_rounds"] = DEBATE_ROUNDS; cfg["max_risk_discuss_rounds"] = RISK_ROUNDS
             cfg["max_tool_rounds"] = MAX_TOOL_ROUNDS; cfg["news_article_limit"] = NEWS_LIMIT; cfg["global_news_article_limit"] = max(3, NEWS_LIMIT // 2)
+            if use_anthropic:
+                _sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5")
+                _haiku = os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5")
+                cfg["llm_provider"] = "anthropic"
+                cfg["deep_think_llm"] = _sonnet
+                cfg["quick_think_llm"] = _haiku
+                cfg["anthropic_effort"] = os.environ.get("CLAUDE_SONNET_EFFORT", "medium")
+                os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "anthropic"
+                os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _sonnet
+                os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _haiku
+                _claude_key = _rg_secret("ONE_XAI_API_KEY") if LLM_PROVIDER == "1xai" else _rg_secret("ANTHROPIC_API_KEY")
+                os.environ["ANTHROPIC_API_KEY"] = _claude_key
+                if LLM_PROVIDER == "1xai": os.environ["ANTHROPIC_BASE_URL"] = os.environ.get("CLAUDE_BASE_URL", "https://1xai.ir/anthropic").rstrip("/")
+            elif LLM_PROVIDER in ("anthropic", "1xai"):
+                # The previous Claude attempt failed; rebuild the graph with Gemini explicitly.
+                cfg["llm_provider"] = "google"
+                cfg["deep_think_llm"] = DEEP
+                cfg["quick_think_llm"] = QUICK
+                os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "google"
+            if use_compat:
+                os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "openai_compatible"
+                os.environ["TRADINGAGENTS_LLM_BACKEND_URL"] = os.environ.get("GROK_BASE_URL", "https://api.x.ai/v1").rstrip("/")
+                os.environ["OPENAI_COMPATIBLE_API_KEY"] = _rg_secret("GROK_API_KEY")
+                _compat_model = os.environ.get("GROK_MODEL", "grok-4.7")
+                os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _compat_model
+                os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _compat_model
             try: ta = TradingAgentsGraph(selected_analysts=AN_SEL, debug=False, config=cfg, callbacks=[PROG] if use_cb else None)      # v25 سبک: تحلیلگر تکنیکال + بنیادی، سپس بحث خوش‌بین/بدبین
             except TypeError as _te:
                 if 'selected_analysts' not in str(_te): raise
@@ -1076,6 +1136,12 @@ def run_agents():
             r = str(rating).lower()
             return (1 if r in ("buy", "overweight") else -1 if r in ("sell", "underweight") else 0), rating, state
         except Exception as e:
+            if (use_compat and os.environ.get("TA_GROK_FALLBACK", "1") == "1") or (use_anthropic and os.environ.get("TA_CLAUDE_FALLBACK", "1") == "1"):
+                use_compat = False
+                use_anthropic = False
+                os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "google"
+                os.environ["GOOGLE_API_KEY"] = _GKEYS[_GK["i"]][1]
+                print("⚠ مدل اصلی در تیم TradingAgents خطا داد؛ تلاش بعدی با Gemini پشتیبان انجام می‌شود.")
             errs.append(f"تلاش {k} ({day}): {type(e).__name__}: {str(e)[:350]}")
             print(f"⚠ {errs[-1][:260]}")
             if globals().get("_GK", {}).get("exhausted"): raise RuntimeError("همهٔ کلیدهای Gemini پشت‌سرهم خطا دادند (اعلان به گوشی رفت؛ کلید جدید اضافه کنید) | " + " | ".join(errs))
@@ -1822,14 +1888,190 @@ def _rg_chat(prompt, model="auto"):
     if isinstance(c, list): c = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in c)
     return re.sub(r"<think>.*?</think>", "", str(c), flags=re.S).strip()
 
+def _grok_chat(prompt, model=None):
+    """OpenAI-compatible Grok endpoint; GROK_BASE_URL is the provider /v1 URL."""
+    import requests as _rq
+    key = _rg_secret("GROK_API_KEY")
+    if not key: raise RuntimeError("GROK_API_KEY is missing")
+    base = os.environ.get("GROK_BASE_URL", "https://api.x.ai/v1").strip().rstrip("/")
+    mdl = os.environ.get("GROK_MODEL", "grok-4.7")  # ignore Gemini model labels passed by legacy callers
+    payload = {"model": mdl, "messages": [{"role": "user", "content": str(prompt)}], "temperature": 0.1}
+    r = _rq.post(base + "/chat/completions", json=payload, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, timeout=(10, int(os.environ.get("TA_GROK_TIMEOUT", "120"))))
+    if r.status_code != 200: raise RuntimeError(f"Grok HTTP {r.status_code}: {r.text[:180]}")
+    data = r.json(); choices = data.get("choices") or []
+    if not choices: raise RuntimeError("Grok returned no choices")
+    content = (choices[0].get("message") or {}).get("content") or ""
+    if isinstance(content, list): content = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in content)
+    try: _record_grok_usage(data.get("usage") or {})
+    except Exception: pass
+    return str(content).strip()
+
+
+def _record_grok_usage(usage):
+    """Log token counts only; never store prompts, completions or credentials."""
+    path = os.environ.get("TA_GROK_USAGE_FILE", os.path.join(os.environ.get("TA_DATA", "data"), "grok_usage.jsonl"))
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    row = {"ts": time.time(), "model": os.environ.get("GROK_MODEL", "grok-4.7"), "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0), "completion_tokens": int(usage.get("completion_tokens", 0) or 0), "total_tokens": int(usage.get("total_tokens", 0) or 0)}
+    with open(path, "a", encoding="utf-8") as f: f.write(json.dumps(row) + "\n")
+
+
+def _record_claude_usage(usage, model=None, cost_toman=None, served_model=None, role=None):
+    """ثبت توکن/هزینهٔ واقعی درگاه در صورت وجود؛ بدون prompt یا کلید."""
+    path = os.environ.get("TA_CLAUDE_USAGE_FILE", os.path.join(os.environ.get("TA_DATA", "data"), "claude_usage.jsonl"))
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    row = {"ts": time.time(), "provider": "1xai" if LLM_PROVIDER == "1xai" else "anthropic",
+           "model": model or os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5"),
+           "served_model": served_model or model,
+           "input_tokens": int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
+           "output_tokens": int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
+           "role": role or "unspecified"}
+    if cost_toman is not None:
+        try: row["cost_toman"] = int(float(cost_toman))
+        except Exception: pass
+    with open(path, "a", encoding="utf-8") as f: f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+_1XAI_MODEL_IDS = None
+_1XAI_MODELS_CHECKED_AT = 0.0
+
+def _1xai_models(force=False):
+    """فهرست مدل‌های واقعاً قیمت‌گذاری‌شده/قابل‌فراخوانی در کلید 1xAI؛ GET رایگان است."""
+    global _1XAI_MODEL_IDS, _1XAI_MODELS_CHECKED_AT
+    if _1XAI_MODEL_IDS is not None and not force and time.time() - _1XAI_MODELS_CHECKED_AT < 900:
+        return _1XAI_MODEL_IDS
+    if LLM_PROVIDER != "1xai": return set()
+    import requests as _rq
+    key = _rg_secret("ONE_XAI_API_KEY")
+    if not key: return set()
+    try:
+        rr = _rq.get(os.environ.get("ONE_XAI_BASE_URL", "https://1xai.ir").rstrip("/") + "/v1/models",
+                     headers={"Authorization": "Bearer " + key}, timeout=(5, 15))
+        rr.raise_for_status()
+        _1XAI_MODEL_IDS = {str(x.get("id")) for x in (rr.json().get("data") or []) if isinstance(x, dict) and x.get("id")}
+        _1XAI_MODELS_CHECKED_AT = time.time()
+        return _1XAI_MODEL_IDS
+    except Exception as e:
+        print(f"⚠ فهرست مدل‌های 1xAI خوانده نشد؛ بررسی دسترسی مدل‌ها هنگام تماس انجام می‌شود ({type(e).__name__}).")
+        return set()
+
+def _claude_chat(prompt, model=None):
+    """Anthropic Messages؛ در حالت 1xAI از درگاه و مدل دقیق نقش استفاده می‌کند."""
+    import requests as _rq
+    via_1xai = LLM_PROVIDER == "1xai"
+    key = _rg_secret("ONE_XAI_API_KEY") if via_1xai else _rg_secret("ANTHROPIC_API_KEY")
+    if not key: raise RuntimeError("ONE_XAI_API_KEY is missing" if via_1xai else "ANTHROPIC_API_KEY is missing")
+    _sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5").strip()
+    _haiku = os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5").strip()
+    _requested = str(model or "").strip()
+    configured = {_sonnet, _haiku,
+                  os.environ.get("CLAUDE_OPUS_MODEL", "claude-opus-5-5").strip(),
+                  os.environ.get("CLAUDE_FABLE_MODEL", "claude-fable-5-2").strip(),
+                  os.environ.get("CLAUDE_MYTHOS_MODEL", "claude-mythos-5-2").strip()}
+    if _requested in configured and _requested.startswith("claude-"):
+        mdl = _requested
+    elif _requested == os.environ.get("DEEP", "__not_deep__") or "deep" in _requested.lower():
+        mdl = _sonnet
+    else:
+        mdl = _haiku
+    payload = {"model": mdl, "max_tokens": int(os.environ.get("TA_CLAUDE_MAX_TOKENS", "4096")),
+               "messages": [{"role": "user", "content": str(prompt)}]}
+    base = (os.environ.get("CLAUDE_BASE_URL", "https://1xai.ir/anthropic") if via_1xai else "https://api.anthropic.com").rstrip("/")
+    headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    if via_1xai: headers["x-1xai-client"] = "infinity-trader-v36"
+    r = _rq.post(base + "/v1/messages", json=payload, headers=headers,
+                 timeout=(10, int(os.environ.get("TA_CLAUDE_TIMEOUT", "150"))))
+    if r.status_code != 200: raise RuntimeError(f"Claude/1xAI HTTP {r.status_code}: {r.text[:240]}")
+    data = r.json()
+    content = "".join(str(x.get("text", "")) for x in (data.get("content") or []) if isinstance(x, dict) and x.get("type") == "text")
+    if not content: raise RuntimeError("Claude returned no text content")
+    cost = r.headers.get("X-1xai-Cost-Toman") or r.headers.get("x-1xai-cost-toman")
+    served = data.get("model") or r.headers.get("X-1xai-Model-Alias") or mdl
+    request_id = r.headers.get("X-Request-Id") or r.headers.get("X-1xai-Request-Id")
+    try:
+        _record_claude_usage(data.get("usage") or {}, mdl, cost_toman=cost, served_model=served, role=os.environ.get("TA_CURRENT_LLM_ROLE"))
+        if request_id:
+            path = os.environ.get("TA_CLAUDE_USAGE_FILE", os.path.join(os.environ.get("TA_DATA", "data"), "claude_usage.jsonl"))
+            with open(path, "r+", encoding="utf-8") as f:
+                lines = f.readlines()
+                if lines:
+                    row = json.loads(lines[-1]); row["request_id"] = request_id
+                    lines[-1] = json.dumps(row, ensure_ascii=False) + "\n"
+                    f.seek(0); f.writelines(lines); f.truncate()
+    except Exception: pass
+    return content.strip()
+
+def _primary_chat(prompt, model=None):
+    if LLM_PROVIDER in ("anthropic", "1xai"):
+        try:
+            _sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5")
+            _deep_hint = (model == DEEP) or (model == os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM"))
+            return _claude_chat(prompt, _sonnet if _deep_hint else model)
+        except Exception as e:
+            if os.environ.get("TA_CLAUDE_FALLBACK", "1") != "1": raise
+            print(f"⚠ Claude ناموفق بود؛ fallback به Gemini ({type(e).__name__}).")
+            return _gem_resilient(prompt, DEEP)
+    if LLM_PROVIDER == "grok":
+        try: return _grok_chat(prompt, model)
+        except Exception as e:
+            if os.environ.get("TA_GROK_FALLBACK", "1") != "1": raise
+            print(f"⚠ Grok ناموفق بود؛ fallback به Gemini ({type(e).__name__}).")
+            return _gem_resilient(prompt, os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", DEEP))
+    return _gem_resilient(prompt, model or DEEP)
+
+
 def _llm_json(prompt, model):
     if globals().get("LLM_PROVIDER") == "rayegan":
         c = _rg_chat(prompt, model); m = re.search(r"\{.*\}", c, re.S)
         return json.loads(m.group(0)), c
-    c = _gem_resilient(prompt, model)      # v28: 503/شلوغی ← صبر + مدل جایگزین + کلید بعدی
+    c = _primary_chat(prompt, model)      # v28: 503/شلوغی ← صبر + مدل جایگزین + کلید بعدی
     if isinstance(c, list): c = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in c)
     m = re.search(r"\{.*\}", c, re.S)
     return json.loads(m.group(0)), c
+
+def _frontier_tactical_review(prompt, report):
+    """مقایسهٔ مستقل Mythos و Fable برای پیشنهاد Entry/SL/TP؛ اعداد نهایی همچنان فقط از Python صادر می‌شوند."""
+    if LLM_PROVIDER != "1xai" or os.environ.get("TA_FRONTIER_TACTICAL", "1") != "1": return {}
+    available = _1xai_models()
+    mythos = os.environ.get("CLAUDE_MYTHOS_MODEL", "claude-mythos-5-2").strip()
+    fable = os.environ.get("CLAUDE_FABLE_MODEL", "claude-fable-5-2").strip()
+    # اگر فهرست 1xAI با موفقیت خوانده شده باشد، مدل خارج از فهرست اصلاً فراخوانی نمی‌شود.
+    known = _1XAI_MODEL_IDS is not None
+    targets = []
+    if not known or mythos in available: targets.append(("Mythos", mythos))
+    else: print(f"ℹ {mythos} در فهرست قابل‌فراخوانی این کلید 1xAI نیست؛ Mythos بدون تلاش پولی رد شد.")
+    if not known or fable in available: targets.append(("Fable", fable))
+    else: print(f"⚠ {fable} در فهرست قابل‌فراخوانی این کلید 1xAI نیست؛ بازبینی Fable انجام نشد.")
+    if not targets: return {"availability": "هیچ‌یک از Mythos/Fable در فهرست مدل‌های قابل‌فراخوانی این کلید نیست."}
+    tactical_prompt = ("You are an independent senior tactical trading analyst. Use only the supplied market evidence. "
+      "Return ONE JSON object in Persian with keys: verdict (GO/WAIT/NO), bias, entry_reference (only an existing engine ID or null), "
+      "sl_reference (only an existing engine ID or null), tp1_reference (existing opposing liquidity ID or null), tp2_reference (existing opposing liquidity ID or null), "
+      "entry_price_proposal, sl_price_proposal, tp1_price_proposal, tp2_price_proposal (numbers only if derivable from the supplied report; otherwise null), "
+      "rr_assessment, invalidation, key_risk, confidence (1-10), rationale. Never invent a level or price. "
+      "Do not override hard risk rules. This is a second opinion, not an execution instruction.\n\nENGINE REPORT:\n" + report + "\n\nBASE SMC ANALYSIS:\n" + prompt)
+    results = {}
+    for role, model in targets:
+        try:
+            os.environ["TA_CURRENT_LLM_ROLE"] = "tactical_" + role.lower()
+            j, raw = _llm_json(tactical_prompt, model)
+            results[role.lower()] = {"model": model, "review": j, "raw_excerpt": raw[:1200]}
+        except Exception as e:
+            results[role.lower()] = {"model": model, "error": f"{type(e).__name__}: {str(e)[:180]}"}
+            print(f"⚠ بازبینی تاکتیکال {role} ناموفق بود: {type(e).__name__}")
+    os.environ.pop("TA_CURRENT_LLM_ROLE", None)
+    return results
+
+def _frontier_tactical_text():
+    x = AG.get("frontier_tactical") or {}
+    if not x: return "Mythos/Fable tactical review: not run."
+    out = []
+    for name in ("mythos", "fable"):
+        item = x.get(name)
+        if not item: continue
+        if item.get("error"): out.append(f"{name.upper()} ({item.get('model')}): unavailable/error: {item['error']}")
+        elif item.get("review"):
+            r = item["review"]
+            out.append(f"{name.upper()} ({item.get('model')}): verdict={r.get('verdict')}; entry={r.get('entry_reference')} / {r.get('entry_price_proposal')}; SL={r.get('sl_reference')} / {r.get('sl_price_proposal')}; TP1={r.get('tp1_reference')} / {r.get('tp1_price_proposal')}; TP2={r.get('tp2_reference')} / {r.get('tp2_price_proposal')}; RR={r.get('rr_assessment')}; risk={r.get('key_risk')}; rationale={r.get('rationale')}")
+    if x.get("availability"): out.append(str(x["availability"]))
+    return "\n".join(out) if out else "Mythos/Fable returned no usable review."
 
 def smc_prepare(pr=None):
     """یک‌بار بعد از تیم عامل‌ها: ایجنت ICT/SMC روی گزارش موتور قضاوت می‌کند. نتیجه در AG['smc'] نگه داشته می‌شود (دوباره صدایش نمی‌زنیم)."""
@@ -1844,15 +2086,20 @@ def smc_prepare(pr=None):
         prompt = (SMC_PROMPT.replace("<<SIDE>>", "LONG (buy)" if side == 1 else "SHORT (sell)").replace("<<ASSET>>", ASSET_DESC.get(ASSET, ASSET)).replace("<<RATING>>", str(AG["rating"]))
                   .replace("<<REPORT>>", rep).replace("<<ENTRY>>", f"{e_def:,.{PXD}f}").replace("<<RISK>>", f"{SL_ATR * a:,.{PXD}f}").replace("<<MAXR>>", f"{MAX_RISK_ATR:g}"))
         deep = os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "gemini-3.5-flash-lite"); quick = os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", deep)
+        opus = os.environ.get("CLAUDE_OPUS_MODEL", "claude-opus-5-5").strip()
         last = ""; j = None
-        for k, model in enumerate((deep, deep, quick)):
+        for k, model in enumerate((opus, deep)):
             try:
+                os.environ["TA_CURRENT_LLM_ROLE"] = "ict_smc"
                 j, raw = _llm_json(prompt, model)
                 if str(j.get("verdict", "")).upper() not in ("GO", "WAIT", "NO"): raise ValueError("verdict نامعتبر: " + str(j.get("verdict")))
                 break
             except Exception as e:
                 last = f"{type(e).__name__}: {str(e)[:200]}"; j = None; print(f"⚠ ایجنت ICT/SMC تلاش {k + 1}: {last}"); time.sleep(5)
-        if j is None: AG["smc_err"] = last; return
+        if j is None:
+            AG["smc_err"] = last
+            AG["frontier_tactical"] = _frontier_tactical_review(prompt, rep)
+            return
         if TREND_GATE and (S.get("tl") or {}).get("against") and str(j.get("verdict", "")).upper() == "GO":      # v24: خلاف خط روند رد نمی‌شود؛ فقط اطمینانش کم می‌شود (ستاپ هم‌جهت با روند در رتبه‌بندی جلوتر می‌ماند)
             try: j["confidence"] = max(1, int(float(j.get("confidence", 5))) - 2)
             except Exception: pass
@@ -1866,6 +2113,8 @@ def smc_prepare(pr=None):
             mid = (ids[ez][0] + ids[ez][1]) / 2
             if 0.1 * a <= side * (price - mid) <= 1.0 * a: res["entry_price"] = mid
         AG["smc"] = res
+        # هر دو مدل Frontier برای یک بررسی تاکتیکال مستقل؛ Mythos فقط در صورت وجود واقعی در فهرست 1xAI.
+        AG["frontier_tactical"] = _frontier_tactical_review(prompt, rep)
     except Exception as e:
         AG["smc_err"] = f"{type(e).__name__}: {str(e)[:250]}"; print("⚠ ایجنت ICT/SMC خطا داد:", AG["smc_err"])
 
@@ -1886,7 +2135,7 @@ def _smc_stale():
 # ================= میز مناظره + مدیر سبد (v8.1) =================
 def _llm_raw(prompt, model):
     if globals().get("LLM_PROVIDER") == "rayegan": return _rg_chat(prompt, model)
-    c = _gem_resilient(prompt, model)      # v28: 503/شلوغی ← صبر + مدل جایگزین + کلید بعدی
+    c = _primary_chat(prompt, model)      # v28: 503/شلوغی ← صبر + مدل جایگزین + کلید بعدی
     if isinstance(c, list): c = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in c)
     return str(c).strip()
 
@@ -2236,10 +2485,18 @@ def _today_stats():
     return float(sum(x["R"] for x in td)), len(td), streak
 
 def _rr_room(S, e, risk, side):
-    """نزدیک‌ترین نقدینگی مهم مقابل برحسب R: (فاصله به R، شناسه، نام) یا None."""
+    """نزدیک‌ترین نقدینگی ساختاریِ معنادار مقابل برحسب R.
+
+    یک پیوت منفرد یا حتی یک جفت سقف/کف برابر در 5m، به‌تنهایی دیوار قطعیِ
+    مسیر 3R نیست؛ این‌ها در گزارش نمایش داده می‌شوند اما فقط خوشهٔ حداقل
+    سه‌لمسی در 5m یا هر استخر تأییدشدهٔ 15m+ می‌تواند گیت سختِ فضای هدف باشد.
+    این تغییر مانع وتوی ستاپ صرفاً به‌خاطر یک swing خرد 5m می‌شود؛ نقدینگی
+    چندتایم‌فریمی همچنان مانع معتبر باقی می‌ماند.
+    """
     best = None
     for x in (S["above"] if side == 1 else S["below"]):
-        if side * (x["p"] - e) > 0 and (x["tf"] != "5m" or x["eq"] >= 1):
+        significant = (x["tf"] != "5m" or x["eq"] >= 2)
+        if side * (x["p"] - e) > 0 and significant:
             r_ = abs(x["p"] - e) / max(risk, 1e-9)
             if best is None or r_ < best[0]: best = (r_, x["id"], x["names"])
     return best
@@ -2469,9 +2726,12 @@ def ceo_prepare(pr=None):
                   .replace("<<COUNCIL>>", cl).replace("<<SMC>>", smc_t).replace("<<DESK>>", dk_t).replace("<<ROOM>>", (f"nearest strong opposing liquidity {rr[1]} ({rr[2]}) is {rr[0]:.1f}R away (R measured with a 1 ATR stop)" if rr else "no strong opposing liquidity found in range"))
                   .replace("<<VOTES>>", f"{now.d15m:+.0f}, {now.d30m:+.0f}, {now.d1h:+.0f}, {now.d1d:+.0f}").replace("<<SESSION>>", S["session"]).replace("<<ECON>>", _econ_txt()).replace("<<CHAIR>>", _chair_txt()).replace("<<NEWS>>", _news_txt()).replace("<<TODAYR>>", f"{tr:+.1f}").replace("<<TODAYN>>", str(tn)).replace("<<STREAK>>", str(stk))
                   .replace("<<TIERS>>", ts).replace("<<LESSONS>>", _lessons()).replace("<<REPORT>>", _cut(rep, 3500)))
+        prompt += "\n\nINDEPENDENT FRONTIER TACTICAL REVIEWS (advisory only; Python levels and hard risk gates remain authoritative):\n" + _frontier_tactical_text()
         deep, quick = _models(); j = None; last = ""
-        for k_, model in enumerate((deep, deep, quick)):
+        opus = os.environ.get("CLAUDE_OPUS_MODEL", "claude-opus-5-5").strip()
+        for k_, model in enumerate((opus, deep)):
             try:
+                os.environ["TA_CURRENT_LLM_ROLE"] = "ceo_final"
                 j, _ = _llm_json(prompt, model)
                 if str(j.get("verdict", "")).upper() not in ("GO", "WAIT", "NO") or str(j.get("grade", "")).upper() not in ("A", "B", "C"): raise ValueError("verdict/grade نامعتبر")
                 break
@@ -3734,11 +3994,15 @@ def _strict_reject(g):
     """None = اوکی؛ وگرنه متن دلیل ردشدن. فقط روی سیگنال نهایی (بعد از عامل‌ها) اعمال می‌شود."""
     if not STRICT: return None
     why = []
-    if USE_AGENTS and AG.get("wanted") and not AG.get("ok"): why.append("تیم عامل‌ها اجرا نشد" + (f" ({str(AG.get('err') or '')[:90]})" if AG.get("err") else ""))
+    if USE_AGENTS and AG.get("wanted") and not AG.get("ok") and not LITE_AGENTS:
+        why.append("تیم عامل‌ها اجرا نشد و حالت تحلیل سبک هم غیرفعال است" + (f" ({str(AG.get('err') or '')[:90]})" if AG.get("err") else ""))
     if USE_AGENTS and CEO_ON:
-        v, gr = g.get("ceo_verdict"), str(g.get("ceo_grade") or "").upper()
-        if v != "GO": why.append("مدیرعامل GO نداد" + (f" ({v})" if v else f" (بی‌پاسخ: {str(AG.get('ceo_err') or 'اجرا نشد')[:90]})"))
-        elif gr not in CEO_GRADES: why.append(f"درجهٔ مدیرعامل {gr} است؛ حداقل لازم {'/'.join(CEO_GRADES)}")
+        v, gr = str(g.get("ceo_verdict") or "").upper(), str(g.get("ceo_grade") or "").upper()
+        # مدیرعامل ناظر و مشاور است، نه گلوگاهِ در دسترس‌نبودن مدل: NO صریح وتو می‌کند؛
+        # WAIT/timeout فقط در صورت تنظیم آگاهانهٔ TA_REQUIRE_GO=1 مانع ارسال می‌شود.
+        if v == "NO": why.append("مدیرعامل صریحاً رد کرد (NO)")
+        elif _REQUIRE_GO and v != "GO": why.append("تأیید GO مدیرعامل لازم است" + (f" ({v})" if v else f" (بی‌پاسخ: {str(AG.get('ceo_err') or 'اجرا نشد')[:90]})"))
+        elif v == "GO" and gr and gr not in CEO_GRADES: why.append(f"درجهٔ مدیرعامل {gr} است؛ حداقل لازم {'/'.join(CEO_GRADES)}")
     if USE_AGENTS and str(g.get("smc_verdict") or "").upper() == "NO": why.append("ایجنت ICT/SMC رد کرد (NO)")
     if STRICT_HARD and g.get("hard"): why.append("پرچم سخت: " + " | ".join(str(h)[:120] for h in list(g["hard"])[:2]))
     return " ؛ ".join(why) or None
@@ -3756,16 +4020,14 @@ def _notify_signal(since, from_watch=False):
                 print("🚫 سیگنال به‌خاطر گیت کیفیت ارسال نشد:", _rej)
                 _send_once(f"🚫 {ASSET} {sd}: سیگنال ارسال نشد (کیفیت)", f"{_asset_label()} · ورود {g.get('entry')} · SL {g.get('sl')}\nدلیل: {_rej}\nنوبت بعد دوباره می‌گردد.", 2, "no_entry_sign")
                 return
-            _tier_emo = {"GOLD": "🥇", "STANDARD": "✅", "RISKY": "🔥"}.get(g.get("tier"), "🔷")
-            line = "─" * 18
-            try: _rrv = f"{abs(float(g['tp2']) - float(g['entry'])) / abs(float(g['entry']) - float(g['sl'])):.1f}".rstrip("0").rstrip(".")
-            except Exception: _rrv = "؟"
-            msg = (f"{_tier_emo} {_asset_label()}  {sd}\n{line}\n"
-                   f"🏅 رده: {g.get('tier') or '-'}   ·   📊 امتیاز: {g.get('score')}/100\n"
-                   f"🧭 استراتژی: {g.get('strat_name') or '-'}\n"
-                   f"👔 مدیرعامل: {g.get('ceo_verdict') or '-'} {('· درجه ' + str(g.get('ceo_grade'))) if g.get('ceo_grade') else ''}\n{line}\n"
-                   f"🎯 ورود: {g.get('entry')}\n🛑 حد ضرر: {g.get('sl')}\n✅ تارگت ۱: {g.get('tp1')}\n🏁 تارگت ۲: {g.get('tp2')}\n{line}\n"
-                   f"⚖ ریوارد نهایی: ۱ به {_rrv}\n⏳ سفارش لیمیت تا ۱ ساعت معتبر است؛ بعد از آن لغو کنید. قیمت لحظه‌ای را با چارت خودتان بسنجید.")
+            _tier_emo = "🟢" if g.get("side") == 1 else "🔴"
+            _grade = str(g.get("ceo_grade") or g.get("grade") or "C").upper()
+            if _grade not in ("A", "B", "C"): _grade = "C"
+            _ceo = str(g.get("ceo_verdict") or "نظر مدیرعامل ثبت‌نشده").upper()
+            _entry = g.get("entry"); _sl = g.get("sl"); _tp1 = g.get("tp1"); _tp2 = g.get("tp2")
+            msg = (f"{_asset_label()} · {'BUY' if g.get('side') == 1 else 'SELL'}\n"
+                   f"گرید: {_grade} | مدیرعامل: {_ceo}\n"
+                   f"ورود: {_entry}\nحدضرر/خروج: {_sl}\nTP1: {_tp1}\nTP2: {_tp2}")
             try:      # لحظهٔ ارسال: قیمت زنده دوباره گرفته می‌شود تا سیگنال کهنه نباشد
                 _fin, _bad = _final_px(g)
                 if _fin: msg = msg.replace(line + "\n🏅", line + "\n" + _fin + "\n" + line + "\n🏅", 1)
@@ -3774,21 +4036,21 @@ def _notify_signal(since, from_watch=False):
                     _send_once(f"🚫 سیگنال {ASSET} لغو شد (قیمت با سطوح نمی‌خواند)", f"{_asset_label()} {sd}\n{_fin}\nورود: {g.get('entry')} · SL: {g.get('sl')} · TP1: {g.get('tp1')}", 3, "no_entry")
                     print("🚫 سیگنال به‌خاطر گیت قیمت لحظه‌ای ارسال نشد."); return
             except Exception as _fe: print(f"⚠ تازه‌سازی قیمت لحظهٔ ارسال ناموفق: {type(_fe).__name__}")
-            try:      # v25: ریسک ثابت؛ حجم از روی فاصلهٔ SL
-                _ru = abs(float(g["entry"]) - float(g["sl"])); _un = RISK_USD / _ru
-                msg += (f"\n{line}\n💼 ریسک ثابت ${RISK_USD:g} ← حجم ≈ {_un:,.6g} واحد (≈ ${_un * float(g['entry']):,.0f})\n"
-                        f"📉 SL: −${RISK_USD:g} · ✅ TP1 (نصف حجم، بعدش SL روی ورود): +${RISK_USD * R_OF['TP1+BE']:,.0f} · 🏁 TP2: +${RISK_USD * R_OF['TP2']:,.0f}")
-            except Exception: pass
-            _fl = [str(x_) for x_ in (g.get("flags") or [])][:3]
-            if _fl: msg += "\n⚠️ پرچم‌های ریسک: " + " | ".join(_fl)
-            if g.get("size_adv") is not None and g["size_adv"] < 1.0: msg += f"\nℹ️ فقط اطلاع: با این پرچم‌ها سیستم ریسک {g['size_adv']:.0%} را پیشنهاد می‌کرد؛ خودکار کم نشد (حجم با خودتان)."
-            if g.get("corr"): msg += "\n🔗 هم‌جهت با: " + "، ".join(g["corr"]) + " (عملاً یک شرط بزرگ؛ حجم با خودتان)"
-            _sh0 = shock_state()
-            if _sh0: msg += "\n" + _shock_txt(_sh0)
             ng = news_guard()
-            if ng["ok"] and ng["near"]: msg = f"🚨🚨 خبر نزدیک است ({ng['near'][0]['title']}); ورود نگذارید! 🚨🚨\n" + msg
-            _send_once(f"{_tier_emo} سیگنال جدید · {g.get('asset')} · {sd}", msg, 5, "rotating_light" if g.get("tier") == "GOLD" else "chart_with_upwards_trend")
-        elif not from_watch: _send_once(f"ℹ تحلیل {ASSET} تمام شد؛ سیگنالی نداد", "ممکن است «نگه‌دار» یا ممنوعیت خبر بوده؛ جزئیات در لاگ.", 3, "information_source")
+            if ng.get("ok") and ng.get("near"):
+                msg = f"⚠️ خبر نزدیک: {ng['near'][0].get('title', 'خبر مهم')}؛ ورود را با احتیاط بررسی کنید.\n" + msg
+            _send_once(f"{_tier_emo} {g.get('asset')} {'BUY' if g.get('side') == 1 else 'SELL'} · گرید {_grade}", msg, 5, "rotating_light" if _grade == "A" else "chart_with_upwards_trend")
+        elif not from_watch:
+            _why = "ستاپ واجد شرایط پیدا نشد"
+            try:
+                _ng = news_guard(); _near = _ng.get("near") or []
+                if _near: _why = f"فیلتر خبر: {_near[0].get('title', 'خبر مهم')}"
+                elif _ng.get("err"): _why = "تقویم خبر قابل‌تأیید نبود؛ احتیاط خبری حفظ شد"
+                _rows = (_ALL.get("rows") or []) if isinstance(_ALL, dict) else []
+                _why_rows = [f"{r.get('a')}: {r.get('why')}" for r in _rows[:2] if r.get('why')]
+                if _why_rows and not _near: _why = " | ".join(_why_rows)
+            except Exception: pass
+            _send_once(f"ℹ {ASSET} · بدون سیگنال", f"علت: {_why[:300]}", 3, "information_source")
     except Exception as e: print(f"⚠ اعلان نتیجه ساخته نشد ({type(e).__name__})")
 
 # ================= v19.1: ثبت سیگنال‌ها برای تشخیص هم‌جهتی + تشخیص شوک سراسری =================
@@ -4120,7 +4382,7 @@ def _wilson_lb(p, n, z=1.28):
     d = 1 + z * z / n; c0 = p + z * z / (2 * n); m = z * np.sqrt(max(p * (1 - p), 0) / n + z * z / (4 * n * n)); return float((c0 - m) / d)
 
 _LAB = {"v": None}
-LAB_VER = 7      # v29: کش قبلی با آستانه‌های اعتبارسنجی جدید کنار گذاشته می‌شود
+LAB_VER = 8      # v32: اقتصاددان و تریدر تکنیکال داور بک‌تست؛ کش قبلی نامعتبر است. v29: کش قبلی با آستانه‌های اعتبارسنجی جدید کنار گذاشته می‌شود
 _DEEP = [False]
 def _lab_days(): return STRAT_DAYS_ALL if (ALL_MODE and not _DEEP[0]) else STRAT_DAYS      # حالت ALL بک‌تست کوتاه‌تر
 def _min_n(): return STRAT_MIN_N if (not ALL_MODE or _DEEP[0]) else max(5, int(round(STRAT_MIN_N * STRAT_DAYS_ALL / max(1, STRAT_DAYS))))
@@ -4149,6 +4411,18 @@ def strat_lab(force=False, quiet=False):
                      "train": _stat([x["R"] for x in rs_[:cut_]]), "oos": _stat([x["R"] for x in rs_[cut_:]])}
             for x in rows: cases.append({**x, "k": k})
         L = {"ver": LAB_VER, "asset": ASSET, "ts": time.time(), "t": utcnow().isoformat(timespec="minutes"), "days": _lab_days(), "bars": len(d5), "stats": st, "cases": cases, "pairs_ok": pair5 is not None and "pairs" in EV and len(EV["pairs"]) > 0}
+        # Peer review: economist + technical trader assess the Python backtest; numeric results remain immutable.
+        try:
+            brief = []
+            for sk, sv in st.items():
+                aa, oo = sv["all"], sv["oos"]
+                brief.append(f"{sk}: n={aa['n']}, WR={aa['wr']:.1%}, expectancy={aa['E']:+.3f}R, PF={aa['pf']:.2f}, OOS n={oo['n']}, OOS E={oo['E']:+.3f}R")
+            bt_context = f"Asset={ASSET}; days={_lab_days()}; bars={len(d5)}\n" + "\n".join(brief)
+            econ_prompt = "You are the chief economist reviewing a quantitative trading backtest. In Persian, assess regime sensitivity, macro/event blind spots, sample bias and generalizability. Do not invent macro data; say what OHLCV alone cannot establish. Give concise verdict and follow-up tests.\n" + bt_context
+            tech_prompt = "You are the senior technical trader reviewing a strategy backtest. In Persian, assess sample size, expectancy, profit factor, OOS split and session concentration. Identify likely overfitting and concrete robustness tests. Do not alter reported statistics.\n" + bt_context
+            L["review"] = {"economist": _llm_raw(econ_prompt, os.environ.get("GROK_MODEL", "grok-4.7"))[:2500], "technical_trader": _llm_raw(tech_prompt, os.environ.get("GROK_MODEL", "grok-4.7"))[:2500], "reviewed_at": time.time()}
+        except Exception as _re:
+            L["review"] = {"error": type(_re).__name__, "note": "نظر ایجنت‌ها در دسترس نبود؛ آمار Python مرجع باقی می‌ماند."}
         _LAB["v"] = L
         try: json.dump(L, open(_lab_path(), "w", encoding="utf-8"), ensure_ascii=False)
         except Exception: pass
@@ -4440,6 +4714,9 @@ def strat_board():
         s = L["stats"][k]; rows[f"{STRATS[k]['e']} {STRATS[k]['n']}"] = [f"n={s['all']['n']} · {s['all']['wr']:.0%} · {s['all']['E']:+.2f}R", _oos_txt(s)] + [(f"n={s['ses'][c]['n']} · {s['ses'][c]['wr']:.0%} · {s['ses'][c]['E']:+.2f}R" if s["ses"][c]["n"] else "—") for c in cols]
     ui_table(pd.DataFrame(rows, index=["کل", f"خارج‌ازنمونه ({OOS_FRAC:.0%} آخر)"] + [f"{SESS_FA[c]} ({SESS_UTC[c]} UTC)" for c in cols]).T, f"🧪 بک‌تست {ASSET}: {L['days']} روز، {L['bars']:,} کندل ۵م (ورود لیمیت با پر شدن واقعی + کارمزد کریپتو، SL={SL_ATR:g}ATR، TP1={SAFE_R1:g}R نصف حجم + BE، TP2={SAFE_R2:g}R، سقف ۲ ساعت؛ برد = R>0). فقط راهنماست، نه وعدهٔ سود.")
     ui(_note("خواندن جدول: این اعداد گذشته‌اند و نمونهٔ هر سشن کوچک است؛ امتیاز زنده با انقباض به سمت کل داده محاسبه می‌شود. وین‌ریت بالا بدون میانگین R مثبت یعنی چیزی نیست (PDF هم همین را می‌گوید: ملاک «انتظار معامله» است).", "#2b8fd6"))
+    rv = L.get("review") or {}
+    if rv.get("economist") or rv.get("technical_trader"):
+        ui_fold("🧠 داوری بک‌تست: اقتصاددان و تریدر تکنیکال", "👨‍💼 اقتصاددان:\n" + str(rv.get("economist", "در دسترس نیست")) + "\n\n📈 تریدر تکنیکال:\n" + str(rv.get("technical_trader", "در دسترس نیست")))
 
 def strat_prepare(pr=None):
     """مرحلهٔ جدید تحلیل: بک‌تست ← آزمون ← انتخاب استراتژی توسط ۱۴ عضو ← تعیین جهت. قبل از ایجنت ICT/میز/مدیرعامل اجرا می‌شود تا همه روی همین ستاپ کار کنند."""
@@ -4645,7 +4922,10 @@ def all_scan():
             try:
                 rv = _llm_review_c(r); r["llm"] = rv; r["sc"] = r["sc"] + rv["bonus"]
                 print(f"   {r['a']}: مدیرعامل {rv['verdict'] or 'بی‌پاسخ'} · درجه {rv['grade'] or '-'} · ICT {rv['smc'] or '-'}")
-                if rv["verdict"] == "NO" or (_HEADLESS and _REQUIRE_GO and rv["verdict"] == "WAIT"): r.update(lv=0, why=f"مدیرعامل تأیید نکرد ({rv['verdict']}): {str(rv.get('why') or '')[:90]}")
+                if rv["verdict"] == "NO" or (_HEADLESS and _REQUIRE_GO and rv["verdict"] == "WAIT"):
+                    r.update(lv=0, why=f"مدیرعامل تأیید نکرد ({rv['verdict']}): {str(rv.get('why') or '')[:90]}")
+                elif rv["verdict"] == "WAIT":
+                    r["advisory"] = f"مدیرعامل WAIT داد؛ به‌عنوان هشدار ثبت شد، نه وتوی خودکار: {str(rv.get('why') or '')[:90]}"
             except Exception as e:
                 r["llm"] = {"verdict": None}; print(f"   ⚠ {r['a']}: بازبینی مدلی خطا داد ({type(e).__name__}: {str(e)[:80]}); با نتیجهٔ بک‌تست می‌ماند.")
         rows.sort(key=lambda r: (r["tier"] >= 0, r["lv"], r["sc"] - (ALL_REPEAT_PEN if r["a"] in rec else 0.0)), reverse=True)
