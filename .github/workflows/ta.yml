@@ -145,25 +145,50 @@ jobs:
           TA_DATA: ${{ github.workspace }}/data
       - name: Cost summary
         if: always()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_MODE: ${{ github.event.inputs.mode || 'Normal' }}
+          RUN_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
         run: |
           python3 - <<'PY'
-          import json, os
+          import json, os, re, urllib.request
           out = open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8")
+          st = {"success": "تمام شد", "failure": "با خطا تمام شد", "cancelled": "لغو شد"}.get(os.environ.get("JOB_STATUS", ""), "نامشخص")
+          head = f"هزینهٔ اجرا · {os.environ.get('RUN_MODE', '')} · {os.environ.get('RUN_ASSET', '')} · {st}"
+          table = ""
           try:
               d = json.load(open("data/cost_summary.json", encoding="utf-8"))
-              ok = d.get("run_id") == os.environ.get("GITHUB_RUN_ID")
+              if d.get("run_id") != os.environ.get("GITHUB_RUN_ID"): raise ValueError("stale")
+              bm = d["by_model"]; tin = sum(v["in"] for v in bm.values()); tout = sum(v["out"] for v in bm.values()); cap = int(d["cap_toman"])
+              lines = [f"هزینهٔ اجرا · {d['mode']} · {d['asset']} · {st}",
+                       f"تماس‌ها: {d['calls']} · توکن ورودی: {tin:,} · خروجی: {tout:,}",
+                       f"برآورد: {d['spent_toman']:,} تومان از سقف {cap:,}" + (" (⛔ سقف پر شد)" if d.get("stopped_by_cap") else "")]
+              top = sorted(bm.items(), key=lambda kv: -kv[1]["toman"])
+              lines += [f"{m}: {v['calls']} تماس · {v['toman']:,} تومان" for m, v in top[:5]]
+              lines.append("برآورد با قیمت لیست؛ مبلغ نهایی در صفحهٔ مصرف 1xAi.")
+              table = "\n| مدل | تماس | توکن ورودی | توکن خروجی | تومان |\n|---|---:|---:|---:|---:|\n" + "".join(
+                  f"| {m} | {v['calls']} | {v['in']:,} | {v['out']:,} | {v['toman']:,} |\n" for m, v in top)
+          except FileNotFoundError:
+              lines = [head, "هیچ تماس پولی ثبت نشد."]
+          except ValueError:
+              lines = [head, "هیچ تماس پولی در این اجرا ثبت نشد."]
           except Exception:
-              d, ok = {}, False
-          if not ok:
-              out.write("### هزینهٔ اجرا\n\nهیچ تماس پولی در این اجرا ثبت نشد.\n")
-              raise SystemExit
-          out.write(f"### هزینهٔ اجرا\n\nحالت: {d['mode']} · دارایی: {d['asset']} · تماس‌ها: {d['calls']}\n\n")
-          out.write(f"برآورد کل: **{d['spent_toman']:,} تومان** از سقف {int(d['cap_toman']):,} تومان")
-          out.write(" (⛔ اجرا به‌خاطر سقف متوقف شد)\n\n" if d.get("stopped_by_cap") else "\n\n")
-          out.write("| مدل | تماس | توکن ورودی | توکن خروجی | تومان |\n|---|---:|---:|---:|---:|\n")
-          for m, v in sorted(d["by_model"].items(), key=lambda kv: -kv[1]["toman"]):
-              out.write(f"| {m} | {v['calls']} | {v['in']:,} | {v['out']:,} | {v['toman']:,} |\n")
-          out.write("\nعدد واقعی هدر درگاه اگر موجود باشد و وگرنه برآورد با قیمت لیست؛ مبلغ نهایی را در صفحهٔ مصرف 1xAi ببینید.\n")
+              lines = [head, "خلاصهٔ هزینه خوانده نشد؛ فایل cost_summary.json را در Artifact ببینید."]
+          msg = "\n".join(lines)
+          out.write("### هزینهٔ اجرا\n\n" + "\n".join("- " + l for l in lines) + "\n" + table)
+          topic = os.environ.get("NTFY_TOPIC", "").strip().replace("https://ntfy.sh/", "").strip("/")
+          if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", topic):
+              out.write("\nاعلان ntfy ارسال نشد: NTFY_TOPIC خالی یا نامعتبر است.\n")
+          else:
+              try:
+                  req = urllib.request.Request("https://ntfy.sh/" + topic, data=msg.encode("utf-8"),
+                                               headers={"Title": "Infinity cost", "Priority": "3", "Tags": "moneybag", "User-Agent": "infinity-cost"})
+                  urllib.request.urlopen(req, timeout=15).read()
+                  out.write("\nاعلان هزینه به ntfy ارسال شد.\n")
+              except Exception as ex:
+                  out.write(f"\nارسال اعلان ntfy ناموفق بود ({type(ex).__name__}).\n")
+          out.close()
           PY
       - uses: actions/upload-artifact@v7
         if: always()
