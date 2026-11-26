@@ -114,6 +114,9 @@ jobs:
           TA_FRONTIER_TACTICAL: ${{ (github.event.inputs.mode == 'VIP' || github.event.inputs.mode == 'Gold') && '1' || '0' }}
           TA_CLAUDE_FALLBACK: "0"
           TA_CLAUDE_MAX_TOKENS: "4096"
+          TA_MODE: ${{ github.event.inputs.mode || 'Normal' }}
+          # سقف هزینهٔ هر اجرا (تومان، برآورد با قیمت لیست)؛ عدد اولیهٔ ایمنی، بعد از چند تست از Settings ← Variables تنظیم شود
+          TA_COST_CAP_TOMAN: ${{ github.event.inputs.mode == 'Gold' && (vars.TA_CAP_GOLD || '350000') || github.event.inputs.mode == 'VIP' && (vars.TA_CAP_VIP || '250000') || (vars.TA_CAP_NORMAL || '150000') }}
           TA_LLM_PROVIDER: "1xai"
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
@@ -140,6 +143,28 @@ jobs:
           TA_COOLDOWN_H: ${{ github.event_name == 'workflow_dispatch' && '0' || vars.TA_COOLDOWN_H || '1' }}
           TA_LIVE_SEC: "30"
           TA_DATA: ${{ github.workspace }}/data
+      - name: Cost summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          out = open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8")
+          try:
+              d = json.load(open("data/cost_summary.json", encoding="utf-8"))
+              ok = d.get("run_id") == os.environ.get("GITHUB_RUN_ID")
+          except Exception:
+              d, ok = {}, False
+          if not ok:
+              out.write("### هزینهٔ اجرا\n\nهیچ تماس پولی در این اجرا ثبت نشد.\n")
+              raise SystemExit
+          out.write(f"### هزینهٔ اجرا\n\nحالت: {d['mode']} · دارایی: {d['asset']} · تماس‌ها: {d['calls']}\n\n")
+          out.write(f"برآورد کل: **{d['spent_toman']:,} تومان** از سقف {int(d['cap_toman']):,} تومان")
+          out.write(" (⛔ اجرا به‌خاطر سقف متوقف شد)\n\n" if d.get("stopped_by_cap") else "\n\n")
+          out.write("| مدل | تماس | توکن ورودی | توکن خروجی | تومان |\n|---|---:|---:|---:|---:|\n")
+          for m, v in sorted(d["by_model"].items(), key=lambda kv: -kv[1]["toman"]):
+              out.write(f"| {m} | {v['calls']} | {v['in']:,} | {v['out']:,} | {v['toman']:,} |\n")
+          out.write("\nعدد واقعی هدر درگاه اگر موجود باشد و وگرنه برآورد با قیمت لیست؛ مبلغ نهایی را در صفحهٔ مصرف 1xAi ببینید.\n")
+          PY
       - uses: actions/upload-artifact@v7
         if: always()
         with:

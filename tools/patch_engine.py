@@ -5,12 +5,13 @@
 3) Grok: مدل‌های grok-* از _grok_chat (کلید و آدرس 1xAi) می‌گذرند و یک تماس دیده‌بان X در هر اجرا به پرامپت مدیرعامل اضافه می‌شود.
 4) ALL: فهرست ده دارایی.
 5) run.py: بررسی کلید برای 1xai فقط ONE_XAI_API_KEY را می‌خواهد.
+6) سقف هزینهٔ هر اجرا (TA_COST_CAP_TOMAN) و ثبت هزینهٔ هر تماس در data/cost_summary.json.
 اگر متن فایل‌ها با انتظار نخواند، بدون نوشتن چیزی با خطا می‌ایستد."""
 import os, sys
 
 ENGINE = sys.argv[1] if len(sys.argv) > 1 else "engine.py"
 RUN = sys.argv[2] if len(sys.argv) > 2 else None
-MARK = "# [patch] infinity-1xai v2"
+MARK = "# [patch] infinity-1xai v3"
 ANCHOR = "import os, re, time, json, getpass, requests\n"
 
 HELPER = MARK + '''
@@ -52,6 +53,53 @@ def _x_scout_text():
         print(f"⚠ دیده‌بان X (Grok) ناموفق بود: {type(e).__name__}: {str(e)[:120]}")
     _GROK_SCOUT[a] = out
     return out
+
+_BUDGET = {"spent": 0.0, "calls": 0, "by": {}, "stop": False}
+_PRICE_1K = {"claude-fable": (2700, 15000), "claude-mythos": (2700, 15000), "claude-opus": (1350, 8800),
+             "claude-sonnet": (705, 3524), "claude-haiku": (90, 500), "grok": (420, 3300)}
+
+class _BudgetStop(BaseException):
+    """سقف هزینهٔ اجرا پر شد؛ عمداً BaseException است تا try/except Exception معمولی جلویش را نگیرد."""
+
+def _budget_cap():
+    try: return float(os.environ.get("TA_COST_CAP_TOMAN", "0") or 0)
+    except ValueError: return 0.0
+
+def _budget_write():
+    try:
+        d = os.environ.get("TA_DATA", "data"); os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "cost_summary.json"), "w", encoding="utf-8") as f:
+            json.dump({"run_id": os.environ.get("GITHUB_RUN_ID", ""), "mode": os.environ.get("TA_MODE", ""),
+                       "asset": os.environ.get("TA_ASSET", ""), "cap_toman": _budget_cap(),
+                       "spent_toman": round(_BUDGET["spent"]), "calls": _BUDGET["calls"],
+                       "stopped_by_cap": _BUDGET["stop"], "by_model": _BUDGET["by"]}, f, ensure_ascii=False)
+    except Exception: pass
+
+def _budget_add(model, usage, cost):
+    """هزینهٔ هر تماس: عدد واقعی درگاه اگر در هدر آمده باشد، وگرنه برآورد از توکن‌ها با قیمت لیست؛ هرگز خطا نمی‌دهد."""
+    try:
+        m = str(model or ""); u = usage or {}
+        tin = int(u.get("input_tokens", u.get("prompt_tokens", 0)) or 0)
+        tout = int(u.get("output_tokens", u.get("completion_tokens", 0)) or 0)
+        c = None
+        if cost is not None:
+            try: c = float(cost)
+            except Exception: c = None
+        if c is None:
+            pin, pout = next((v for k, v in _PRICE_1K.items() if m.startswith(k)), (705, 3524))
+            c = tin / 1000.0 * pin + tout / 1000.0 * pout
+        _BUDGET["spent"] += c; _BUDGET["calls"] += 1
+        b = _BUDGET["by"].setdefault(m, {"calls": 0, "in": 0, "out": 0, "toman": 0})
+        b["calls"] += 1; b["in"] += tin; b["out"] += tout; b["toman"] = round(b["toman"] + c)
+        _budget_write()
+    except Exception: pass
+
+def _budget_check():
+    cap = _budget_cap()
+    if cap > 0 and _BUDGET["spent"] >= cap:
+        _BUDGET["stop"] = True; _budget_write()
+        print(f"⛔ سقف هزینهٔ این اجرا ({cap:,.0f} تومان) پر شد؛ تماس‌های مدل متوقف شدند.")
+        raise _BudgetStop("cost cap reached")
 '''
 
 G_START = 'if LLM_PROVIDER != "rayegan":\n    _ui("#7c4dff"'
@@ -75,6 +123,14 @@ PC_NEW = ('def _primary_chat(prompt, model=None):\n'
 SC_OLD = r'''        prompt += "\n\nINDEPENDENT FRONTIER TACTICAL REVIEWS (advisory only; Python levels and hard risk gates remain authoritative):\n" + _frontier_tactical_text()
 '''
 SC_NEW = SC_OLD + '        prompt += _x_scout_text()\n'
+BC_OLD = '    via_1xai = LLM_PROVIDER == "1xai"\n    key = _rg_secret("ONE_XAI_API_KEY") if via_1xai'
+BC_NEW = '    _budget_check()\n' + BC_OLD
+BG_OLD = '    key = _rg_secret("GROK_API_KEY")\n    if not key: raise RuntimeError("GROK_API_KEY is missing")\n'
+BG_NEW = '    _budget_check()\n' + BG_OLD
+RC_OLD = 'def _record_claude_usage(usage, model=None, cost_toman=None, served_model=None, role=None):\n    """ثبت توکن/هزینهٔ واقعی درگاه در صورت وجود؛ بدون prompt یا کلید."""\n'
+RC_NEW = RC_OLD + '    _budget_add(model, usage, cost_toman)\n'
+RG_OLD = 'def _record_grok_usage(usage):\n    """Log token counts only; never store prompts, completions or credentials."""\n'
+RG_NEW = RG_OLD + '    _budget_add(os.environ.get("GROK_MODEL", "grok-4.7"), usage, None)\n'
 ALL_OLD = 'ALL_ASSETS = ["Gold", "BTC", "ETH"]'
 ALL_NEW = 'ALL_ASSETS = ["Gold", "NAS100", "EURUSD", "GBPUSD", "BTC", "ETH", "DOGE", "XRP", "ADA", "SOL"]'
 RUN_OLD = 'if _provider == "grok" else any('
@@ -90,16 +146,18 @@ def patch_engine(src):
         raise SystemExit("patch_engine: engine.py با پایان‌خط ویندوز است؛ چیزی نوشته نشد.")
     need = {"anchor": (src.count(ANCHOR), 1), "gemini-start": (src.count(G_START), 1), "gemini-end": (src.count(G_END), 1),
             "ceo": (src.count(CEO_OLD), 1), "primary-chat": (src.count(PC_OLD), 1), "scout": (src.count(SC_OLD), 1),
-            "all-assets": (src.count(ALL_OLD), 1)}
+            "all-assets": (src.count(ALL_OLD), 1), "budget-claude": (src.count(BC_OLD), 1), "budget-grok": (src.count(BG_OLD), 1),
+            "rec-claude": (src.count(RC_OLD), 1), "rec-grok": (src.count(RG_OLD), 1)}
     bad = {k: v[0] for k, v in need.items() if v[0] != v[1]}
     if bad or src.index(G_START) > src.index(G_END):
         raise SystemExit(f"patch_engine: متن engine.py با انتظار نمی‌خواند {bad}؛ چیزی نوشته نشد.")
     i, j = src.index(G_START), src.index(G_END)
     src = src[:i] + 'if LLM_PROVIDER != "rayegan":\n' + STUB + src[j:]
     src = (src.replace(ANCHOR, ANCHOR + HELPER, 1).replace(CEO_OLD, CEO_NEW, 1).replace(PC_OLD, PC_NEW, 1)
-              .replace(SC_OLD, SC_NEW, 1).replace(ALL_OLD, ALL_NEW, 1))
+              .replace(SC_OLD, SC_NEW, 1).replace(ALL_OLD, ALL_NEW, 1)
+              .replace(BC_OLD, BC_NEW, 1).replace(BG_OLD, BG_NEW, 1).replace(RC_OLD, RC_NEW, 1).replace(RG_OLD, RG_NEW, 1))
     compile(src, ENGINE, "exec")
-    return src, "engine.py: Gemini غیرفعال، سقف تماس مدیرعامل، مسیر Grok و فهرست ده دارایی اعمال شد."
+    return src, "engine.py: Gemini غیرفعال، سقف تماس مدیرعامل، مسیر Grok، فهرست ده دارایی و سقف هزینه اعمال شد."
 
 
 def patch_run(src):
