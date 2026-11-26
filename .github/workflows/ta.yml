@@ -7,23 +7,31 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "حالت اجرا: VIP یا Normal"
+        description: "حالت اجرا: Normal، VIP یا Gold (Gold برای تخفیف چهارروزهٔ Claude)"
         type: choice
         required: false
         default: "Normal"
         options:
           - Normal
           - VIP
+          - Gold
       asset:
         description: "دارایی (پیش‌فرض Gold)"
         type: choice
         required: false
         default: "Gold"
         options:
+          - ALL
           - Gold
+          - NAS100
+          - EURUSD
+          - GBPUSD
           - BTC
           - ETH
-          - ALL
+          - DOGE
+          - XRP
+          - ADA
+          - SOL
           - Silver
       search_min:
         description: "حداکثر دقیقه جستجو (۱۵ تا ۶۰)"
@@ -76,43 +84,37 @@ jobs:
             echo "PYTHONPATH=$GITHUB_WORKSPACE/TradingAgents" >> "$GITHUB_ENV"
           fi
       - name: Apply engine patches
-        run: python tools/patch_engine.py engine.py
+        run: python tools/patch_engine.py engine.py run.py
+        env:
+          TA_LLM_PROVIDER: "1xai"
       - name: Run Infinity scan
         run: python run.py
         env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
-          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
-          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
-          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
-          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
-          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
-          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
-          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
-          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
-          # همهٔ موتورها با همین یک کلید 1xAi
+          # همهٔ موتورها (Claude، Grok و بقیه) فقط با همین یک کلید 1xAi
           ONE_XAI_API_KEY: ${{ secrets.ONE_XAI_API_KEY }}
           CLAUDE_BASE_URL: "https://1xai.ir/anthropic"
           ONE_XAI_BASE_URL: "https://1xai.ir"
           GROK_API_KEY: ${{ secrets.ONE_XAI_API_KEY }}
           GROK_BASE_URL: "https://1xai.ir/v1"
           GROK_MODEL: "grok-4.7"
-          CLAUDE_HAIKU_MODEL: ${{ vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
-          CLAUDE_SONNET_MODEL: ${{ vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
+          TA_X_SCOUT: "1"
+          TA_GROK_FALLBACK: "0"
+          # Gold: جایگاه سریع روی Sonnet و جایگاه عمیق روی Opus (تخفیف چهارروزهٔ Claude)
+          CLAUDE_HAIKU_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-sonnet-5-5' || vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
+          CLAUDE_SONNET_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-opus-5-5' || vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
           CLAUDE_OPUS_MODEL: ${{ vars.CLAUDE_OPUS_MODEL || 'claude-opus-5-5' }}
           CLAUDE_FABLE_MODEL: ${{ vars.CLAUDE_FABLE_MODEL || 'claude-fable-5-2' }}
           CLAUDE_MYTHOS_MODEL: ${{ vars.CLAUDE_MYTHOS_MODEL || 'claude-mythos-5-2' }}
           CLAUDE_SONNET_EFFORT: ${{ vars.CLAUDE_SONNET_EFFORT || 'medium' }}
-          # مدیرعامل در هر دو حالت یکسان: مدل اصلی تا سقف تماس، بعد مدل پشتیبان
+          # مدیرعامل در هر سه حالت یکسان: سه تماس Fable، بعد Opus
           TA_CEO_MODEL: ${{ vars.TA_CEO_MODEL || 'claude-fable-5-2' }}
           TA_CEO_FALLBACK_MODEL: ${{ vars.TA_CEO_FALLBACK_MODEL || 'claude-opus-5-5' }}
           TA_CEO_MAX_CALLS: ${{ vars.TA_CEO_MAX_CALLS || '3' }}
-          # VIP = بازبینی Mythos و Fable روشن | Normal = خاموش
-          TA_FRONTIER_TACTICAL: ${{ (github.event.inputs.mode || vars.TA_MODE_DEFAULT || 'Normal') == 'VIP' && '1' || '0' }}
+          # بازبینی Mythos و Fable: در VIP و Gold روشن، در Normal خاموش
+          TA_FRONTIER_TACTICAL: ${{ (github.event.inputs.mode == 'VIP' || github.event.inputs.mode == 'Gold') && '1' || '0' }}
           TA_CLAUDE_FALLBACK: "0"
           TA_CLAUDE_MAX_TOKENS: "4096"
           TA_LLM_PROVIDER: "1xai"
-          TA_KEY_START: ${{ github.run_number }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
@@ -148,5 +150,6 @@ jobs:
       - uses: actions/cache/save@v5
         if: always()
         with:
+          name: ta-data
           path: data
           key: ta-data-${{ github.run_id }}
