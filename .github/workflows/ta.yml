@@ -1,9 +1,19 @@
 name: TradingAgents
 on:
-  schedule:
-    - cron: "*/5 * * * *" # هر ۵ دقیقه ماشه می‌خورد؛ تا اجرای قبلی تمام نشده باشد در صف می‌ماند (concurrency)، پس نوبت بعدی ≤ ۵ دقیقه بعد از پایان نوبت قبلی شروع می‌شود
+  # زمان‌بند خودکار خاموش است تا بدون اجازه از کیف پول خرج نشود.
+  # برای روشن‌کردن، علامت # را از دو خط زیر بردارید.
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
+      mode:
+        description: "حالت اجرا: VIP یا Normal"
+        type: choice
+        required: false
+        default: "Normal"
+        options:
+          - Normal
+          - VIP
       asset:
         description: "دارایی (پیش‌فرض Gold)"
         type: choice
@@ -16,19 +26,26 @@ on:
           - ALL
           - Silver
       search_min:
-        description: "حداکثر دقیقه جستجو"
+        description: "حداکثر دقیقه جستجو (۱۵ تا ۶۰)"
+        type: choice
         required: false
         default: "60"
+        options:
+          - "15"
+          - "20"
+          - "30"
+          - "45"
+          - "60"
       min_lv:
         description: "حداقل پله اطمینان (۳ یا ۴)"
         required: false
-        default: "3"
+        default: "2"
       agents:
         description: "تیم ایجنت‌های مدلی: 0 = خاموش | 1 = روشن (پیش‌فرض؛ فقط مشاور است و سقف زمان دارد)"
         required: false
         default: "1"
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && 'tradingagents-manual' || 'tradingagents' }}      # اجرای دستی صف جدا دارد تا پشت ماشه‌های ۵دقیقه‌ای نماند یا جایش را نگیرند
+  group: ${{ github.event_name == 'workflow_dispatch' && 'tradingagents-manual' || 'tradingagents' }}
   cancel-in-progress: false
 jobs:
   scan:
@@ -52,7 +69,6 @@ jobs:
           mkdir -p TradingAgents
           pip install -q --disable-pip-version-check yfinance requests pandas numpy
           if [ "$TA_AGENTS" != "0" ]; then
-            # فقط برای حالت ایجنت: نسخهٔ پایتونیِ تگ‌شده (شاخهٔ main ریپوی اصلی دیگر پایتون نیست)
             OK=0
             for REF in v0.3.1 v0.3.0 v0.2.5; do
               rm -rf TradingAgents
@@ -79,32 +95,52 @@ jobs:
           GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
           GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
           GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
-          TA_KEY_START: ${{ github.run_number }}   # هر اجرا (دستی یا خودکار) از کلید بعدی شروع می‌شود: ۱→۲→…→۱۰→۱
+          # همهٔ موتورها با همین یک کلید 1xAi
+          ONE_XAI_API_KEY: ${{ secrets.ONE_XAI_API_KEY }}
+          CLAUDE_BASE_URL: "https://1xai.ir/anthropic"
+          ONE_XAI_BASE_URL: "https://1xai.ir"
+          GROK_API_KEY: ${{ secrets.ONE_XAI_API_KEY }}
+          GROK_BASE_URL: "https://1xai.ir/v1"
+          GROK_MODEL: "grok-4.7"
+          CLAUDE_HAIKU_MODEL: ${{ vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
+          CLAUDE_SONNET_MODEL: ${{ vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
+          CLAUDE_OPUS_MODEL: ${{ vars.CLAUDE_OPUS_MODEL || 'claude-opus-5-5' }}
+          CLAUDE_FABLE_MODEL: ${{ vars.CLAUDE_FABLE_MODEL || 'claude-fable-5-2' }}
+          CLAUDE_MYTHOS_MODEL: ${{ vars.CLAUDE_MYTHOS_MODEL || 'claude-mythos-5-2' }}
+          CLAUDE_SONNET_EFFORT: ${{ vars.CLAUDE_SONNET_EFFORT || 'medium' }}
+          # مدیرعامل در هر دو حالت یکسان: مدل اصلی تا سقف تماس، بعد مدل پشتیبان
+          TA_CEO_MODEL: ${{ vars.TA_CEO_MODEL || 'claude-fable-5-2' }}
+          TA_CEO_FALLBACK_MODEL: ${{ vars.TA_CEO_FALLBACK_MODEL || 'claude-opus-5-5' }}
+          TA_CEO_MAX_CALLS: ${{ vars.TA_CEO_MAX_CALLS || '3' }}
+          # VIP = بازبینی Mythos و Fable روشن | Normal = خاموش
+          TA_FRONTIER_TACTICAL: ${{ (github.event.inputs.mode || vars.TA_MODE_DEFAULT || 'Normal') == 'VIP' && '1' || '0' }}
+          TA_CLAUDE_FALLBACK: "0"
+          TA_CLAUDE_MAX_TOKENS: "4096"
+          TA_LLM_PROVIDER: "1xai"
+          TA_KEY_START: ${{ github.run_number }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}  # Gold / BTC / ETH / ALL؛ ALL فقط همین سه دارایی را می‌گردد
+          TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
           TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '60' }}
           TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
-          TA_REQUIRE_GO: "1"          # v29: مدیرعامل در مسیر مدلی باید GO بدهد
-          TA_LEAN: "0"                # v29: لایه‌های هماهنگ‌کننده/اقتصاددان/شورا فعال
+          TA_REQUIRE_GO: "0"
+          TA_LEAN: "0"
           TA_ANALYSTS: "market,social,news,fundamentals"
           TA_STRICT_HARD: "1"
-          TA_FINAL_FALLBACK: "0"   # v28: خاموش؛ ۴ سیگنالِ اجباریِ امتیاز ۰ پشت‌سرهم استاپ خوردند. بی‌سیگنال بهتر از سیگنال بد (برای برگشت: "1")
-          TA_STRICT: "1"           # v28: گیت کیفیت: بدون GO مدیرعامل (درجه A/B) و بدون پرچم سخت، سیگنال ارسال نمی‌شود (۰ = رفتار قبلی)
-          TA_CEO_GRADES: "AB"      # v28: درجه‌های قابل‌قبول مدیرعامل (AB = فقط A و B)
-          TA_LITE_AGENTS: "1"      # v28: اگر تیم اصلی TradingAgents افتاد (مثلاً 503 گوگل)، ICT/SMC و مدیرعامل با گزارش موتور باز هم کار می‌کنند
-          TA_AGENT_ROUNDS: "2"     # v28: تیم اصلی با خطای زودگذر تا ۲ دور (در سقف TA_AGENT_MIN) دوباره اجرا می‌شود
-          TA_LLM_BUDGET_SEC: "180" # v28: سقف انتظار هر تماس مدلی (صبر + مدل جایگزین + کلید بعدی) قبل از تسلیم
-          TA_AGENT_MIN: "18"       # سقف زمان تیم ایجنت‌ها (۷ دقیقه کم بود و تیم نیمه‌کاره قطع می‌شد)؛ بیشتر شد بدون ایجنت ادامه می‌دهد
-          TA_LLM_TOPK: "0"         # ایجنت‌ها وسط جست‌وجو دروازه‌بان نیستند
+          TA_FINAL_FALLBACK: "0"
+          TA_STRICT: "1"
+          TA_CEO_GRADES: "ABC"
+          TA_LITE_AGENTS: "1"
+          TA_AGENT_ROUNDS: "2"
+          TA_LLM_BUDGET_SEC: "180"
+          TA_AGENT_MIN: "18"
+          TA_LLM_TOPK: "0"
           TA_MIN_PER_HOUR: "0"
-          TA_TECH_AFTER: "0.5"     # بعد از نیمهٔ مهلت، ستاپ تکنیکالِ خوب هم پذیرفته می‌شود
-          # سقف ساعتی برداشته شد: هر نوبت تا ۶۰ دقیقه می‌گردد، سیگنال پیدا شد فرستاده می‌شود و نوبت بعد ≤ ۵ دقیقه بعد شروع می‌شود.
-          # کولداون فقط جلوی ارسالِ دوبارهٔ «همان دارایی و همان جهت» را می‌گیرد؛ دستی = بدون کولداون. (برای تغییر: Variable با نام TA_COOLDOWN_H)
+          TA_TECH_AFTER: "0.5"
           TA_MAX_PER_HOUR: "999"
-          TA_SPOT_ADJ: ${{ vars.TA_SPOT_ADJ || '0' }}      # اختلاف بروکر شما با منبع عمومی؛ در Settings→Variables بگذارید
+          TA_SPOT_ADJ: ${{ vars.TA_SPOT_ADJ || '0' }}
           TA_COOLDOWN_H: ${{ github.event_name == 'workflow_dispatch' && '0' || vars.TA_COOLDOWN_H || '1' }}
-          TA_LIVE_SEC: "30"        # قبل از ارسال، ۳۰ ثانیه قیمت زنده آپدیت می‌شود و سیگنال با آخرین قیمت فرستاده می‌شود
+          TA_LIVE_SEC: "30"
           TA_DATA: ${{ github.workspace }}/data
       - uses: actions/upload-artifact@v7
         if: always()
