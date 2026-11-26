@@ -1,0 +1,53 @@
+name: Telegram connection test
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  telegram:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Verify bot and optionally send a private test message
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ['TELEGRAM_BOT_TOKEN'].strip()
+          chat_id = os.environ['TELEGRAM_CHAT_ID'].strip()
+          if not token:
+              sys.exit('TELEGRAM_BOT_TOKEN is not configured.')
+
+          def call(method, **fields):
+              url = f'https://api.telegram.org/bot{token}/{method}'
+              try:
+                  data = urllib.parse.urlencode(fields).encode()
+                  with urllib.request.urlopen(url, data=data, timeout=15) as response:
+                      result = json.load(response)
+                  if result.get('ok'):
+                      return result['result']
+              except (OSError, ValueError):
+                  pass
+              sys.exit(f'Telegram API request failed: {method}. No credentials logged.')
+
+          bot = call('getMe')
+          if bot.get('username', '').lower() != 'infinity070moneybot':
+              sys.exit('The token belongs to a different bot.')
+          print('Telegram verified @Infinity070MoneyBot.')
+          if not chat_id:
+              print('No TELEGRAM_CHAT_ID configured; no message was sent.')
+          elif not chat_id.isascii() or not chat_id.isdecimal() or int(chat_id) <= 0:
+              sys.exit('TELEGRAM_CHAT_ID must be a positive private-chat ID.')
+          else:
+              call('sendMessage', chat_id=chat_id, text='اتصال برقرار شد ✅')
+              print('Private test message sent.')
+          PY
