@@ -22,6 +22,7 @@ jobs:
           import re
           import sys
           import time
+          import urllib.error
           import urllib.parse
           import urllib.request
 
@@ -30,22 +31,45 @@ jobs:
           code = os.environ['TELEGRAM_TEST_CODE'].strip()
           if not token:
               sys.exit('TELEGRAM_BOT_TOKEN is not configured.')
+          if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]+', token):
+              sys.exit('Invalid TELEGRAM_BOT_TOKEN format. Store only the token copied from BotFather.')
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          opener = urllib.request.build_opener(NoRedirect())
+
+          def fail(method, status):
+              hints = {
+                  401: 'Telegram rejected the token. Check the current BotFather token in GitHub Secrets.',
+                  404: 'Telegram did not recognize the API path. Check that the BotFather token was copied in full.',
+                  403: 'Telegram forbids this request. For sendMessage, make sure the chat has started and not blocked the bot.',
+                  409: 'A webhook or another Telegram consumer may be active.',
+                  429: 'Telegram rate limited the request; try again shortly.',
+              }
+              sys.exit(f'Telegram {method}: HTTP/API {status}. {hints.get(status, "No credentials logged.")}')
 
           def call(method, **fields):
               url = f'https://api.telegram.org/bot{token}/{method}'
+              data = urllib.parse.urlencode(fields).encode() if fields else None
               try:
-                  data = urllib.parse.urlencode(fields).encode()
-                  with urllib.request.urlopen(url, data=data, timeout=15) as response:
+                  with opener.open(url, data=data, timeout=15) as response:
                       result = json.load(response)
-                  if result.get('ok'):
-                      return result['result']
-              except (OSError, ValueError):
-                  pass
-              sys.exit(f'Telegram API request failed: {method}. No credentials logged.')
+              except urllib.error.HTTPError as exc:
+                  fail(method, exc.code)
+              except (OSError, ValueError) as exc:
+                  sys.exit(f'Telegram {method}: connection or response error ({type(exc).__name__}). No credentials logged.')
+              if isinstance(result, dict) and result.get('ok'):
+                  return result['result']
+              status = result.get('error_code') if isinstance(result, dict) else None
+              if type(status) is int and 100 <= status <= 599:
+                  fail(method, status)
+              sys.exit(f'Telegram {method}: unexpected API response. No credentials logged.')
 
           if call('getMe').get('username', '').lower() != 'infinity070moneybot':
               sys.exit('The token belongs to a different bot.')
-          print('Telegram verified @Infinity070MoneyBot.')
+          print('Telegram verified @Infinity070MoneyBot.', flush=True)
 
           if not chat_id and code:
               if not re.fullmatch(r'[A-Za-z0-9]{12,64}', code):
@@ -60,7 +84,7 @@ jobs:
                   if chat.get('type') == 'private' and message.get('date', 0) >= cutoff and message.get('text') == '/test ' + code:
                       matches.add(str(chat.get('id', '')))
               if len(matches) != 1:
-                  sys.exit('No unique recent private test command found. Send /test followed by your test code and rerun.')
+                  sys.exit('No unique recent private test command found. Send /test followed by your test code and start a new run.')
               chat_id = matches.pop()
 
           if not chat_id:
