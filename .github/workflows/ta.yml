@@ -1,7 +1,7 @@
 name: TradingAgents
 on:
-  # زمان‌بند خودکار خاموش است تا بدون اجازه از کیف پول خرج نشود.
-  # برای روشن‌کردن، علامت # را از دو خط زیر بردارید.
+  # حالت امن: اسکن خودکار خاموش است و اجرا فقط با دستور شروع می‌شود (دکمهٔ Run workflow یا فرمان تلگرام).
+  # برای روشن‌کردن اسکن خودکار، علامت # را از دو خط زیر بردارید.
   # schedule:
   #   - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -36,14 +36,6 @@ on:
           - "30"
           - "45"
           - "60"
-      min_lv:
-        description: "حداقل پله اطمینان (۳ یا ۴)"
-        required: false
-        default: "2"
-      agents:
-        description: "تیم ایجنت‌های مدلی: 0 = خاموش | 1 = روشن (پیش‌فرض؛ فقط مشاور است و سقف زمان دارد)"
-        required: false
-        default: "1"
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && 'tradingagents-manual' || 'tradingagents' }}
   cancel-in-progress: false
@@ -52,7 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      TA_AGENTS: ${{ github.event.inputs.agents || vars.TA_AGENTS_DEFAULT || '1' }}
+      # تیم ایجنت‌های مدلی همیشه روشن است
+      TA_AGENTS: ${{ vars.TA_AGENTS_DEFAULT || '1' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -82,6 +75,8 @@ jobs:
             pip install -q --disable-pip-version-check ./TradingAgents
             echo "PYTHONPATH=$GITHUB_WORKSPACE/TradingAgents" >> "$GITHUB_ENV"
           fi
+      - name: Apply engine patches
+        run: python tools/patch_engine.py engine.py
       - name: Run Infinity scan
         run: python run.py
         env:
@@ -122,7 +117,8 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TA_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
           TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '60' }}
-          TA_MIN_LV: ${{ github.event.inputs.min_lv || '3' }}
+          # حداقل پلهٔ اطمینان ثابت است (همان پیش‌فرض قبلی فرم)
+          TA_MIN_LV: ${{ vars.TA_MIN_LV || '2' }}
           TA_REQUIRE_GO: "0"
           TA_LEAN: "0"
           TA_ANALYSTS: "market,social,news,fundamentals"

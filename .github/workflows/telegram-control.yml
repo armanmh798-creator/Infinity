@@ -1,0 +1,28 @@
+name: Telegram control
+# هر چند دقیقه پیام‌های ربات تلگرام را می‌خواند. هیچ تماس پولی با مدل‌ها ندارد؛
+# فقط وقتی مالک فرمان /run بدهد، گردش‌کار TradingAgents را راه می‌اندازد.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: telegram-control
+  cancel-in-progress: false
+
+jobs:
+  listen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check Telegram for commands
+        run: python3 tools/telegram_listener.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
