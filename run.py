@@ -16,10 +16,11 @@ os.environ.setdefault("TA_TECH_AFTER", "2")      # بیشتر از ۱ یعنی �
 os.environ.setdefault("TA_MIN_PER_HOUR", "0")    # سیگنال ضعیفِ اجباری در انتهای ساعت ممنوع
 os.environ.setdefault("TA_REPO_DIR", os.path.join(HERE, "TradingAgents"))
 os.environ.setdefault("TA_STRICT", "1")           # v28: گیت سخت کیفیت
-os.environ.setdefault("TA_STRICT_HARD", "1")       # v29: پرچم‌های سخت همیشه مانع ارسال
+os.environ.setdefault("TA_STRICT_HARD", "1")       # v30: فقط ریسک‌های ساختاری واقعی وتو می‌کنند
 os.environ.setdefault("TA_LEAN", "0")              # v29: لایه‌های هماهنگ‌کننده/اقتصاددان/شورا در اجراهای مجهز به ایجنت روشن
-os.environ.setdefault("TA_REQUIRE_GO", "1")        # v29: تأیید صریح مدیرعامل برای مسیرهای مدلی
-os.environ.setdefault("TA_ANALYSTS", "market,social,news,fundamentals")  # تحلیل چندتخصصی
+os.environ.setdefault("TA_REQUIRE_GO", "0")        # v30: مدیرعامل ناظر است؛ فقط NO صریح وتو می‌کند، WAIT/timeout به‌تنهایی قفل نمی‌کند
+os.environ.setdefault("TA_ANALYSTS", "market,social,news,fundamentals")
+os.environ.setdefault("TA_LLM_PROVIDER", "anthropic")  # Claude Sonnet برای deep + Haiku برای quick؛ Gemini پشتیبان
 os.environ.setdefault("TA_LITE_AGENTS", "1")       # v28: اگر تیم اصلی TradingAgents افتاد، ICT/SMC و مدیرعامل با گزارش موتور اجرا شوند
 LOGP = os.path.join(tempfile.gettempdir(), "ta_last_run.log")
 RUN_STARTED = time.time()
@@ -84,6 +85,74 @@ def _ntfy(title, message, priority=3, tags=None):
         return False
 
 
+
+def _no_signal_diagnosis(default_reason="در این بازه ستاپ واجد شرایط پیدا نشد"):
+    """خلاصهٔ دلیل بی‌سیگنالی از وضعیت واقعی موتور؛ بدون حدس‌زدن خبر یا نظر مدیرعامل."""
+    reasons = []
+    try:
+        ng_fn = G.get("news_guard") if isinstance(G, dict) else None
+        if callable(ng_fn):
+            ng = ng_fn() or {}
+            near = ng.get("near") or []
+            if near:
+                x = near[0]
+                reasons.append(f"فیلتر خبر: {str(x.get('title') or 'خبر مهم')} ({x.get('impact', 'اثرگذار')})")
+            elif ng.get("err"):
+                reasons.append("تقویم خبر قابل‌تأیید نبود؛ فیلتر احتیاطی فعال بماند")
+    except Exception:
+        pass
+    try:
+        board = G.get("_ALL", {}) if isinstance(G, dict) else {}
+        rows = board.get("rows", []) if isinstance(board, dict) else []
+        for row in rows[:3]:
+            if not isinstance(row, dict):
+                continue
+            asset = str(row.get("a") or "")
+            why = str(row.get("why") or "").strip()
+            llm = row.get("llm") or {}
+            verdict = str(llm.get("verdict") or "").upper()
+            grade = str(llm.get("grade") or "").upper()
+            ceo_why = str(llm.get("why") or "").strip()
+            if verdict == "NO":
+                why = "مدیرعامل: NO" + (f"؛ {ceo_why}" if ceo_why else "")
+            elif verdict == "WAIT" and ceo_why and not why:
+                why = "مدیرعامل: WAIT؛ " + ceo_why
+            elif verdict and grade and not why:
+                why = f"مدیرعامل {verdict} · درجه {grade}"
+            if not why:
+                tier = int(row.get("tier", -1) or 0)
+                if tier == 0:
+                    why = "ستاپ فعال نبود یا هنوز در حال شکل‌گیری است"
+                elif tier < 0:
+                    why = "دادهٔ تازه یا بک‌تست معتبر در دسترس نبود"
+            if why:
+                reasons.append((f"{asset}: " if asset else "") + why)
+    except Exception:
+        pass
+    # لاگ آخرین دور، فقط اگر وضعیت ساختاری دلیل مشخصی نداده باشد.
+    if not reasons:
+        try:
+            tail = open(LOGP, encoding="utf-8", errors="ignore").read()[-5000:]
+            patterns = [
+                (r"مدیرعامل[^\n]{0,180}", "نظر مدیرعامل"),
+                (r"پرچم سخت[^\n]{0,180}", "فیلتر ریسک"),
+                (r"خبر[^\n]{0,180}(?:WAIT|NO|ممنوع|نزدیک)[^\n]{0,100}", "فیلتر خبر"),
+                (r"بازار بسته[^\n]{0,120}", "بازار بسته"),
+                (r"داده[^\n]{0,120}(?:کهنه|تازه|ناموجود)[^\n]{0,80}", "دادهٔ بازار"),
+            ]
+            for pat, _ in patterns:
+                m = re.findall(pat, tail, flags=re.I)
+                if m:
+                    reasons.append(m[-1].strip()[:190]); break
+        except Exception:
+            pass
+    clean = []
+    for item in reasons:
+        item = re.sub(r"\s+", " ", str(item)).strip(" ؛،|")
+        if item and item not in clean:
+            clean.append(item)
+    return " | ".join(clean[:2])[:360] if clean else default_reason
+
 def _journal_count():
     """تعداد رکوردهای ژورنال سیگنال؛ فقط برای گزارش، نه تصمیم معاملاتی."""
     path = os.path.join(DATA, "scalp_journal_signals.jsonl")
@@ -95,7 +164,7 @@ def _journal_count():
 
 
 def _scrub(t):
-    for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
+    for k in ("ONE_XAI_API_KEY", "ANTHROPIC_API_KEY", "GROK_API_KEY", "GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
         v = os.environ.get(k, "")
         if v: t = str(t).replace(v, "***")
     return str(t)
@@ -217,7 +286,7 @@ def _engine_src():
 rc, status = 0, "ok"
 t0 = time.time()
 _before_signals = _journal_count()
-_ntfy("Infinity", f"🟢 شروع اسکن Infinity\nدارایی: {os.environ.get('TA_ASSET', 'Gold')}\nزمان تهران: {_tehran(t0)}", 3, ["rocket"])
+# اعلان شروع اسکن حذف شد؛ فقط نتیجهٔ نهایی به گوشی می‌رود.
 
 # هشدار آماده‌باش: پنج دقیقه مانده به پایان مهلت جست‌وجوی موتور، مگر اینکه سیگنال زودتر ارسال شده باشد.
 _prewarn_stop = threading.Event()
@@ -238,18 +307,21 @@ def _pre_signal_warning():
         return  # سیگنال نهایی زودتر رسیده؛ هشدار آماده‌باش دیگر لازم نیست.
     _ntfy("Infinity", "⏳ جست‌وجو نزدیک پایان است؛ اگر مدیرعامل تأیید کند سیگنال می‌آید، وگرنه این نوبت بی‌سیگنال تمام می‌شود (کیفیت مهم‌تر از تعداد).", 3, ["hourglass"])
 
-_prewarn_thread = threading.Thread(target=_pre_signal_warning, name="ntfy-pre-signal", daemon=True)
+_prewarn_thread = None  # اعلان‌های میانی حذف شدند تا گوشی فقط نتیجهٔ نهایی را بگیرد.
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
-if os.environ.get("TA_AGENTS", "0") != "0" and not any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10")): say("⚠ همهٔ کلیدهای GOOGLE_API_KEY خالی‌اند؛ حداقل یکی را در Secrets و workflow بگذارید."); status, rc = "error: no key", 1
+_provider = os.environ.get("TA_LLM_PROVIDER", "anthropic").strip().lower()
+_primary_key_ok = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()) if _provider == "anthropic" else bool(os.environ.get("GROK_API_KEY", "").strip()) if _provider == "grok" else any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10"))
+if os.environ.get("TA_AGENTS", "0") != "0" and not _primary_key_ok: say(f"⚠ کلید مدل اصلی ({_provider}) تنظیم نشده است؛ Secret مناسب را اضافه کنید."); status, rc = "error: no key", 1
 else:
     try:
-        _prewarn_thread.start()
         exec(compile(_engine_src(), ENGINE, "exec"), G)
     except _HeadlessStop as e:
         status = f"skip ({e})"
-        _why = {"no-setup-in-window": "در مهلت جست‌وجو ستاپ قابل‌قبول پیدا نشد", "nothing-found": "بهترین گزینه تکراری بود یا داده‌ای نبود",
-                "hourly-quota": "سقف سیگنال ساعتی پر است"}.get(str(e), str(e))
-        _ntfy("Infinity", f"ℹ️ این نوبت سیگنال نداد\nدلیل: {_why}\nدارایی: {os.environ.get('TA_ASSET', 'Gold')}\nزمان تهران: {_tehran()}", 3, ["information_source"])
+        _why = {"no-setup-in-window": "در مهلت اسکن ستاپ واجد شرایط پیدا نشد",
+                "nothing-found": "فرصت معتبر پیدا نشد یا گزینهٔ برتر تکراری بود",
+                "hourly-quota": "سقف تعداد سیگنال در بازهٔ اخیر پر شده"}.get(str(e), str(e))
+        _detail = _no_signal_diagnosis(_why)
+        _ntfy("Infinity · بدون سیگنال", f"{os.environ.get('TA_ASSET', 'Gold')} | علت: {_detail}", 3, ["information_source"])
     except BaseException as e:
         status, rc = f"error: {type(e).__name__}", 1
         tail = _scrub("".join(traceback.format_exception_only(type(e), e)))[:400]
