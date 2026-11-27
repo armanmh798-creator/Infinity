@@ -13,18 +13,24 @@ import os, re, sys, json, time
 import concurrent.futures as cf
 
 OP, SO, HA = "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"
-FA, MY = "claude-fable-5-2", "claude-mythos-5-2"
-GS, GF, GA = "gpt-6.2-sol", "gemini-3.8-flash", "gemini-4-argon"
+# اصلاح بر پایهٔ بررسی موتورها: claude-mythos-5-2 خطای ۴۰۴ می‌داد و جایش fable است (تماس واقعی سالم بود).
+FA = "claude-fable-5-2"
+MY = FA
+# gemini-3.8-flash جواب خالی می‌داد؛ gemini-4-argon در بررسی سالم بود (گران‌تر از flash).
+GS, GA = "gpt-6.2-sol", "gemini-4-argon"
+GF = GA
 GK = "grok-4.7"
-DP, DF = "deepseek-v4-pro", "deepseek-v4.1-flash"
+# deepseek-v4.1-flash جواب خالی می‌داد؛ نام deepseek-flash در فهرست حساب هست (هنوز با تماس واقعی سنجیده نشده).
+DP, DF = "deepseek-v4-pro", "deepseek-flash"
 QP, QF = "qwen3.7-plus", "qwen3.8-flash"
-GL, GLF, MM = "glm-5.3", "glm-5.3-flashx", "MiniMax-M3.1-Flash"
+# glm-5.3-flashx در حساب نبود؛ glm-5.3-flash در فهرست حساب هست (هنوز با تماس واقعی سنجیده نشده).
+GL, GLF, MM = "glm-5.3", "glm-5.3-flash", "MiniMax-M3.1-Flash"
 LU = "gpt-6-luna"
 
-# قیمت برآوردی هر هزار توکن (تومان): (ورودی، خروجی). قیمت Luna از برازش روی گزارش مصرف خود شما (۷۹ تماس) است و تقریبی. فقط برای سقف هزینه؛ عدد نهایی در صفحهٔ مصرف 1xAi است.
+# قیمت برآوردی هر هزار توکن (تومان): (ورودی، خروجی). قیمت Luna از برازش روی گزارش مصرف خود شما (۷۹ تماس) است و تقریبی. قیمت DF و GLF هم برآوردی است. فقط برای سقف هزینه؛ عدد نهایی در صفحهٔ مصرف 1xAi است.
 PRICE_1K = {
-    FA: (2700, 15000), MY: (2700, 15000), OP: (1350, 8800), SO: (705, 3524), HA: (90, 500),
-    GS: (490, 2200), GA: (360, 2800), GF: (160, 800), GK: (420, 3300),
+    FA: (2700, 15000), OP: (1350, 8800), SO: (705, 3524), HA: (90, 500),
+    GS: (490, 2200), GA: (360, 2800), GK: (420, 3300),
     LU: (360, 585), DP: (106, 423), DF: (32, 127), QP: (115, 458), QF: (32, 100), GL: (88, 529), GLF: (32, 106), MM: (32, 127),
 }
 
@@ -37,7 +43,7 @@ SYSTEM_BASE = (
 FORMAT = ("Reply in exactly this format, English, max 70 words in total:\n"
           "VERDICT: GO|WAIT|NO|NA\nCONF: 0-100\nWHY: <one or two sentences>")
 
-# حالت چهارم Eco: کارگرها فقط روی سه موتور ارزان (Haiku 5.5، GLM 5.3 FlashX، GPT-6 Luna)؛ مدیرعامل (آرمان میرحسینی) Sonnet 5.5 با Opus 5.5 فقط جایگزین.
+# حالت چهارم Eco: کارگرها فقط روی سه موتور ارزان (Haiku 5.5، GLM 5.3 Flash، GPT-6 Luna)؛ مدیرعامل (آرمان میرحسینی) Sonnet 5.5 با Opus 5.5 فقط جایگزین.
 ECO = {1: SO,
        2: HA, 3: LU, 4: GLF, 5: HA, 6: LU, 7: LU, 8: HA, 9: LU, 10: HA,
        11: GK,
