@@ -33,7 +33,7 @@ on:
           - XRP
           - ADA
           - SOL
-          - Silver
+          - TRX
       search_min:
         description: "حداکثر دقیقه جستجو (۱۵ تا ۶۰)"
         type: choice
