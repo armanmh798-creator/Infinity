@@ -17,14 +17,23 @@ DESK_REPS = [
     ("one of the five sovereigns", "one of the three sovereigns"),
     ("specialists 2-6 are the five sovereigns", "specialists 2, 3 and 5 are the three sovereigns"),
 ]
-ENGINE_REPS = [(
-    'ALL_ASSETS = ["Gold", "BTC", "ETH"]',
-    'ALL_ASSETS = ["Gold", "BTC", "ETH"]\n'
-    '_ALLGRP = {"ALLCRYPTO": ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "TRX"], "ALLFOREX": ["EURUSD", "GBPUSD", "Gold"]}\n'
+ALL_ANCHORS = (
+    'ALL_ASSETS = ["Gold", "NAS100", "EURUSD", "GBPUSD", "BTC", "ETH", "DOGE", "XRP", "ADA", "SOL"]',   # بعد از patch_engine.py (ترتیب CI)
+    'ALL_ASSETS = ["Gold", "BTC", "ETH"]',                                                              # engine خام
+)
+_GRP_CODE = (
+    '\n_ALLGRP = {"ALLCRYPTO": ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "TRX"], "ALLFOREX": ["EURUSD", "GBPUSD", "Gold"]}\n'
     '_g_ = str(ASSET).upper().replace("-", "").replace("_", "").replace(" ", "")\n'
     'if _g_ in _ALLGRP: ALL_ASSETS = list(_ALLGRP[_g_]); ASSET = "ALL"\n'
-    '#'),
-]
+    '#'
+)
+
+
+def engine_reps(src):
+    for a in ALL_ANCHORS:
+        if src.count(a) == 1:
+            return [(a, a + _GRP_CODE)]
+    return []
 
 
 def apply(path, reps):
@@ -36,6 +45,11 @@ def apply(path, reps):
     if MARK in src:
         print(f"patch_team3: {path} از قبل اعمال شده است.")
         return True
+    if callable(reps):
+        reps = reps(src)
+        if not reps:
+            print(f"patch_team3: لنگر ALL_ASSETS در {path} پیدا نشد؛ فایل دست‌نخورده ماند.")
+            return False
     for old, new in reps:
         if src.count(old) != 1:
             print(f"patch_team3: لنگر در {path} پیدا نشد؛ فایل دست‌نخورده ماند: {old[:50]}")
@@ -54,7 +68,7 @@ def apply(path, reps):
 
 if __name__ == "__main__":
     apply(DESK, DESK_REPS)
-    apply(ENGINE, ENGINE_REPS)
+    apply(ENGINE, engine_reps)
     try:      # امتیاز ۱۰۰ (tools/patch_score.py)؛ با TA_SCORE100=0 در اجرا خاموش می‌شود
         import patch_score
         patch_score.apply_engine(ENGINE)
