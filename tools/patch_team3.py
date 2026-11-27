@@ -2,7 +2,7 @@
 """وصلهٔ تیم سه‌نفره و ALL جداگانه (بعد از patch_desk.py اجرا می‌شود).
 استفاده: python tools/patch_team3.py tools/desk25.py engine.py
 1) سلاطین: Al Brooks، Larry Williams، Richard Wyckoff می‌مانند؛ Jake Bernstein و Linda Raschke خاموش می‌شوند.
-2) دارایی ALLCRYPTO و ALLFOREX: دامنهٔ اسکن ALL را روی همان گروه می‌گذارد.
+2) دارایی ALL_CRYPTO و ALL_FOREX: دامنهٔ اسکن ALL را روی همان گروه می‌گذارد.
 اگر هر لنگر پیدا نشود، آن فایل دست‌نخورده می‌ماند و اجرا ادامه می‌دهد (هشدار چاپ می‌شود)."""
 import sys
 
@@ -55,3 +55,8 @@ def apply(path, reps):
 if __name__ == "__main__":
     apply(DESK, DESK_REPS)
     apply(ENGINE, ENGINE_REPS)
+    try:      # امتیاز ۱۰۰ (tools/patch_score.py)؛ با TA_SCORE100=0 در اجرا خاموش می‌شود
+        import patch_score
+        patch_score.apply_engine(ENGINE)
+    except Exception as e:
+        print(f"patch_team3: patch_score اعمال نشد ({type(e).__name__}); engine بدون امتیاز ۱۰۰ ماند.")
