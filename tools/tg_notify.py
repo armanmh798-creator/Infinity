@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""اعلان تلگرام فارسی بعد از هر اجرا: وضعیت موتورها، فعالیت سلاطین، نظر مدیرعامل و هزینه.
+"""اعلان تلگرام فارسی بعد از هر اجرا: وضعیت موتورها، فعالیت سلاطین، نظر مدیرعامل، هزینه و دلیل واقعی نتیجه.
 متن پرامپت و پاسخ کامل ایجنت‌ها هرگز فرستاده نمی‌شود؛ فقط برچسب رأی، درصد اطمینان و موتور.
+این گزارش فقط به TELEGRAM_CHAT_ID مالک می‌رود و برای مشتری نیست.
 توکن فقط از متغیر محیطی خوانده می‌شود و هیچ‌جا چاپ نمی‌شود. بدون توکن/چت‌آیدی فقط پیش‌نمایش چاپ می‌شود.
 استفاده: python tools/tg_notify.py   (بعد از مرحلهٔ اجرا، با if: always())
 """
@@ -47,6 +48,29 @@ def _agent_line(a):
     if isinstance(s, (int, float)) and isinstance(e, (int, float)):
         dur = " · " + fa(round(e - s)) + " ثانیه"
     return f"{_icon(a.get('status'))} {a.get('name', '؟')}: {verdict} · اطمینان {_conf(a)} · {served}{dur}"
+
+
+def _diagnosis(desk, cost):
+    """دلیل واقعی نتیجه را از داده‌ها می‌خواند؛ دلیل بازاری یا توجیه ساختگی نمی‌نویسد."""
+    reasons = []
+    if os.environ.get("JOB_STATUS") == "failure":
+        reasons.append("اجرا با خطا تمام شد؛ برای جزئیات، لاگ Actions را ببینید.")
+    if os.environ.get("DESK_PATCHED") == "0":
+        reasons.append("وصل‌شدن تیم ۲۵ایجنت ناموفق بود؛ اجرا با موتور قبلی انجام شد.")
+    calls = int(cost.get("calls", 0) or 0) if cost else 0
+    if not cost or calls == 0:
+        reasons.append("هیچ تماس پولی انجام نشد؛ موتورها عملاً اجرا نشده‌اند.")
+    if desk is None and os.environ.get("DESK_PATCHED") != "0":
+        reasons.append("گزارش تیم ساخته نشد؛ احتمال خطا در اجرای موتورها یا قطع زودهنگام.")
+    if desk:
+        agents = desk.get("agents", [])
+        if agents and not any(a.get("status") in ("ok", "fallback") for a in agents):
+            reasons.append("هیچ موتوری پاسخ قابل‌استفاده نداد؛ اتصال API یا کلید 1xAi را بررسی کنید.")
+    if cost and cost.get("stopped_by_cap"):
+        reasons.append("سقف هزینهٔ اجرا پر شد و اجرا زودتر متوقف شد.")
+    if not reasons:
+        reasons.append("اجرا کامل بود؛ سیگنالی صادر نشد. جزئیات گیت کیفیت در لاگ موجود است.")
+    return ["🔎 دلیل واقعی نتیجه:"] + ["  • " + r for r in reasons]
 
 
 def build():
@@ -100,6 +124,8 @@ def build():
     else:
         L.append("💰 هیچ تماس پولی ثبت نشد.")
     L.append("ℹ️ برآورد با قیمت لیست؛ مبلغ نهایی در صفحهٔ مصرف 1xAi.")
+    L.append("")
+    L += _diagnosis(desk, cost)
     return "\n".join(L)[:3800]
 
 
