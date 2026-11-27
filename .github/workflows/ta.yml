@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "حالت اجرا: Normal، VIP، Gold یا Eco (Eco ارزان‌ترین است؛ Gold برای تخفیف چهارروزهٔ Claude)"
+        description: "حالت اجرا (ستون جدول ۲۵ عامل): Normal، VIP، Gold یا Eco (Eco ارزان‌ترین؛ Gold قوی‌ترین مدل هر نقش)"
         type: choice
         required: false
         default: "Normal"
@@ -118,20 +118,26 @@ jobs:
           # تیم ۲۵ایجنت (tools/desk25.py)؛ برای خاموش‌کردن، متغیر TA_DESK را در Variables روی 0 بگذارید
           TA_DESK: ${{ vars.TA_DESK || '1' }}
           TA_MODEL_MAP: ${{ vars.TA_MODEL_MAP }}
-          # Gold: جایگاه سریع روی Sonnet و جایگاه عمیق روی Opus (تخفیف چهارروزهٔ Claude)
-          CLAUDE_HAIKU_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-sonnet-5-5' || vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
-          CLAUDE_SONNET_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-opus-5-5' || vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
+          # v37: روتر ۲۵ عاملی داخل engine.py هر نقش را طبق جدول (ستون Normal/VIP/Gold؛ Eco یک پله ارزان‌تر) به مدل خودش می‌رساند.
+          # شناسه‌ها اینجا دیگر جابه‌جا نمی‌شوند (Haiku همان Haiku و Sonnet همان Sonnet است) تا جدول دقیقاً اجرا شود.
+          TA_ROUTER: ${{ vars.TA_ROUTER || '1' }}
+          TA_ROSTER_JSON: ${{ vars.TA_ROSTER_JSON }}
+          TA_MODEL_IDS: ${{ vars.TA_MODEL_IDS }}
+          CLAUDE_HAIKU_MODEL: ${{ vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
+          CLAUDE_SONNET_MODEL: ${{ vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
           CLAUDE_OPUS_MODEL: ${{ vars.CLAUDE_OPUS_MODEL || 'claude-opus-5-5' }}
           CLAUDE_FABLE_MODEL: ${{ vars.CLAUDE_FABLE_MODEL || 'claude-fable-5-2' }}
           CLAUDE_MYTHOS_MODEL: ${{ vars.CLAUDE_MYTHOS_MODEL || 'claude-mythos-5-2' }}
           CLAUDE_SONNET_EFFORT: ${{ vars.CLAUDE_SONNET_EFFORT || 'medium' }}
-          # مدیرعامل: Normal/VIP/Gold سه تماس Fable بعد Opus؛ Eco سه تماس Sonnet 5.5 بعد Haiku
-          TA_CEO_MODEL: ${{ github.event.inputs.mode == 'Eco' && 'claude-sonnet-5-5' || vars.TA_CEO_MODEL || 'claude-fable-5-2' }}
-          TA_CEO_FALLBACK_MODEL: ${{ github.event.inputs.mode == 'Eco' && 'claude-haiku-5-5' || vars.TA_CEO_FALLBACK_MODEL || 'claude-opus-5-5' }}
+          # مدیرعامل (طبق جدول): Normal = Opus 5.5 + نظر دوم GPT-6.2 Sol · VIP/Gold = Mythos + نظر دوم Fable · Eco = Sonnet 5.5 بدون نظر دوم.
+          # سه تماس اول با مدل اصلی؛ بعد از سقف (TA_CEO_MAX_CALLS) جایگزین Sonnet 5.5 و بعد Opus 5.5 (Eco: Haiku 5.5). اگر Mythos در فهرست کلید نباشد، بدون تماس پولی Fable می‌آید.
+          TA_CEO_MODEL: ${{ github.event.inputs.mode == 'Eco' && 'claude-sonnet-5-5' || (github.event.inputs.mode == 'VIP' || github.event.inputs.mode == 'Gold') && 'claude-mythos-5-2' || 'claude-opus-5-5' }}
+          TA_CEO_FALLBACK_MODEL: ${{ github.event.inputs.mode == 'Eco' && 'claude-haiku-5-5' || 'claude-sonnet-5-5' }}
           TA_CEO_MAX_CALLS: ${{ vars.TA_CEO_MAX_CALLS || '3' }}
-          # بازبینی Mythos و Fable: در VIP و Gold روشن، در Normal و Eco خاموش
-          TA_FRONTIER_TACTICAL: ${{ (github.event.inputs.mode == 'VIP' || github.event.inputs.mode == 'Gold') && '1' || '0' }}
+          # نظر دوم مستقل مدیرعامل (Normal: GPT-6.2 Sol · VIP/Gold: Fable)؛ در Eco خاموش
+          TA_FRONTIER_TACTICAL: ${{ github.event.inputs.mode == 'Eco' && '0' || '1' }}
           TA_CLAUDE_FALLBACK: "0"
+          TA_FALLBACK: "0"      # Gemini/Google و موتور رایگان کاملاً خاموش
           TA_CLAUDE_MAX_TOKENS: "4096"
           TA_MODE: ${{ github.event.inputs.mode || 'Normal' }}
           # سقف هزینهٔ هر اجرا (تومان، برآورد با قیمت لیست)؛ عدد اولیهٔ ایمنی، بعد از چند تست از Settings ← Variables تنظیم شود
@@ -143,13 +149,13 @@ jobs:
           TA_SEARCH_MIN: ${{ github.event.inputs.search_min || '60' }}
           # حداقل پلهٔ اطمینان ثابت است (همان پیش‌فرض قبلی فرم)
           TA_MIN_LV: ${{ vars.TA_MIN_LV || '2' }}
-          TA_REQUIRE_GO: "0"
+          TA_REQUIRE_GO: ${{ vars.TA_REQUIRE_GO || '0' }}
           TA_LEAN: "0"
           TA_ANALYSTS: "market,social,news,fundamentals"
           TA_STRICT_HARD: "1"
-          TA_FINAL_FALLBACK: "0"
+          TA_FINAL_FALLBACK: ${{ vars.TA_FINAL_FALLBACK || '0' }}
           TA_STRICT: "1"
-          TA_CEO_GRADES: "ABC"
+          TA_CEO_GRADES: ${{ vars.TA_CEO_GRADES || 'ABC' }}
           TA_LITE_AGENTS: "1"
           TA_AGENT_ROUNDS: "2"
           TA_LLM_BUDGET_SEC: "180"
@@ -196,6 +202,17 @@ jobs:
               lines = [head, "خلاصهٔ هزینه خوانده نشد؛ فایل cost_summary.json را در Artifact ببینید."]
           msg = "\n".join(lines)
           out.write("### هزینهٔ اجرا\n\n" + "\n".join("- " + l for l in lines) + "\n" + table)
+          try:      # تماس‌های غیر Claude (GPT، Gemini، Grok، DeepSeek، GLM، Qwen، MiniMax) که روتر v37 فرستاد؛ جدا از جمع بالا تا دوباره‌شماری نشود
+              rr = [json.loads(x) for x in open(f"data/router_usage_{os.environ.get('GITHUB_RUN_ID', 'local')}.jsonl", encoding="utf-8") if x.strip()]
+              agg = {}
+              for x in rr:
+                  a = agg.setdefault(x["model"], [0, 0, 0, 0, 0]); a[0] += 1; a[1] += x["in"]; a[2] += x["out"]; a[3] += x["toman"]; a[4] += 1 if x.get("est") else 0
+              if agg:
+                  out.write("\n#### تماس‌های روتر (مدل‌های غیر Claude)\n\n| مدل | تماس | توکن ورودی | توکن خروجی | تومان | برآوردی |\n|---|---:|---:|---:|---:|---:|\n" + "".join(
+                      f"| {m} | {a[0]} | {a[1]:,} | {a[2]:,} | {a[3]:,} | {a[4]} |\n" for m, a in sorted(agg.items(), key=lambda kv: -kv[1][3])))
+                  lines.append(f"روتر غیر Claude: {sum(a[0] for a in agg.values())} تماس · {sum(a[3] for a in agg.values()):,} تومان")
+                  msg = "\n".join(lines)
+          except Exception: pass
           topic = os.environ.get("NTFY_TOPIC", "").strip().replace("https://ntfy.sh/", "").strip("/")
           if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", topic):
               out.write("\nاعلان ntfy ارسال نشد: NTFY_TOPIC خالی یا نامعتبر است.\n")
