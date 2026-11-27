@@ -3,36 +3,37 @@
 
 - هر ایجنت در هر حالت (Normal / VIP / Gold / Eco) موتور اصلی و زنجیرهٔ جایگزین دارد؛ ناموفق = رفتن به جایگزین.
 - ایجنت‌ها فقط مشاوره می‌دهند؛ سطوح قیمت و گیت‌های ریسک پایتون معتبر می‌مانند.
-- ایجنت‌های فاز pre اجرا می‌شوند؛ مدیرعامل (جمع‌بندی موتور دوم) آخر؛ Grok (۱۱) همان دیده‌بان X داخل engine است.
-- ایجنت‌های post (۲۱، ۲۲) و screen (۲۳ تا ۲۵) تعریف شده‌اند ولی هنوز به موتور وصل نیستند.
+- نظم اجرا (v2): مرحلهٔ ۱ سلاطین (ایجنت ۲ تا ۶) هر کدام تنها و مستقل، مرحلهٔ ۲ تیم تحقیق (بقیهٔ pre)، مرحلهٔ ۳ مدیرعامل (آرمان میرحسینی).
+  زمان شروع و پایان هر ایجنت اندازه‌گیری و در data/desk_summary.json ثبت می‌شود و همان گزارش انضباط به مدیرعامل داده می‌شود.
+- Grok (۱۱) همان دیده‌بان X داخل engine است. ایجنت‌های post (۲۱، ۲۲) و screen (۲۳ تا ۲۵) هنوز به موتور وصل نیستند.
 - سقف هزینه: تیم فقط تا TA_DESK_SHARE از سقف اجرا (پیش‌فرض ۰٫۴۵) خرج می‌کند تا مدیرعامل اصلی جا داشته باشد.
-- هیچ متن پرامپت یا پاسخی در فایل خلاصه ذخیره نمی‌شود.
+- هیچ متن پرامپت یا پاسخ در فایل خلاصه ذخیره نمی‌شود.
 استفاده‌ی دستی: python tools/desk25.py --table [Normal|VIP|Gold|Eco]   |   python tools/desk25.py --estimate
 """
 import os, re, sys, json, time
 import concurrent.futures as cf
 
 OP, SO, HA = "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"
-# اصلاح بر پایهٔ بررسی موتورها: claude-mythos-5-2 خطای ۴۰۴ می‌داد و جایش fable است (تماس واقعی سالم بود).
 FA = "claude-fable-5-2"
-MY = FA
-# gemini-3.8-flash جواب خالی می‌داد؛ gemini-4-argon در بررسی سالم بود (گران‌تر از flash).
-GS, GA = "gpt-6.2-sol", "gemini-4-argon"
-GF = GA
+# Mythos در بررسی موتورها HTTP 404 داد؛ تا زمانی که در حساب فعال نشده Fable جایگزین است. با TA_MYTHOS_MODEL می‌شود برگرداند.
+MY = os.environ.get("TA_MYTHOS_MODEL", "").strip() or FA
+# gemini-3.8-flash نام پنل 1xAi است؛ پاسخ خالی‌اش از سقف کم توکن بود (پایین‌تر، کف ۱۵۰۰ توکن).
+GS, GF, GA = "gpt-6.2-sol", "gemini-3.8-flash", "gemini-4-argon"
 GK = "grok-4.7"
-# deepseek-v4.1-flash جواب خالی می‌داد؛ نام deepseek-flash در فهرست حساب هست (هنوز با تماس واقعی سنجیده نشده).
+# deepseek-flash و glm-5.3-flash: نام‌های جایگزین؛ با تماس واقعی هنوز سنجیده نشده‌اند (بررسی موتورها در اجرای بعدی می‌سنجد).
 DP, DF = "deepseek-v4-pro", "deepseek-flash"
 QP, QF = "qwen3.7-plus", "qwen3.8-flash"
-# glm-5.3-flashx در حساب نبود؛ glm-5.3-flash در فهرست حساب هست (هنوز با تماس واقعی سنجیده نشده).
 GL, GLF, MM = "glm-5.3", "glm-5.3-flash", "MiniMax-M3.1-Flash"
 LU = "gpt-6-luna"
 
 # قیمت برآوردی هر هزار توکن (تومان): (ورودی، خروجی). قیمت Luna از برازش روی گزارش مصرف خود شما (۷۹ تماس) است و تقریبی. قیمت DF و GLF هم برآوردی است. فقط برای سقف هزینه؛ عدد نهایی در صفحهٔ مصرف 1xAi است.
 PRICE_1K = {
-    FA: (2700, 15000), OP: (1350, 8800), SO: (705, 3524), HA: (90, 500),
-    GS: (490, 2200), GA: (360, 2800), GK: (420, 3300),
+    FA: (2700, 15000), "claude-mythos-5-2": (2700, 15000), OP: (1350, 8800), SO: (705, 3524), HA: (90, 500),
+    GS: (490, 2200), GA: (360, 2800), GF: (160, 800), GK: (420, 3300),
     LU: (360, 585), DP: (106, 423), DF: (32, 127), QP: (115, 458), QF: (32, 100), GL: (88, 529), GLF: (32, 106), MM: (32, 127),
 }
+
+SOVEREIGN_IDS = (2, 3, 4, 5, 6)
 
 SYSTEM_BASE = (
     "You are one named specialist on a trading desk that analyses a single trade setup. "
@@ -42,6 +43,12 @@ SYSTEM_BASE = (
     "You are advisory; you cannot change levels or risk gates. Be blunt and specific, no disclaimers.\nYOUR ROLE: ")
 FORMAT = ("Reply in exactly this format, English, max 70 words in total:\n"
           "VERDICT: GO|WAIT|NO|NA\nCONF: 0-100\nWHY: <one or two sentences>")
+SOV_RULE = ("\nYou are one of the five sovereigns. You work alone and report only to the desk chief; you do not see anyone else. "
+            "Take a clear stance. Use NA only if the brief lacks everything your method needs; "
+            "if only some data is missing, judge from what is present and name what is missing.")
+FORMAT_S = ("Reply in exactly this format, English, max 120 words in total:\n"
+            "VERDICT: GO|WAIT|NO|NA\nCONF: 0-100\n"
+            "WHY: <three or four sentences: your signature method applied to this brief, the single biggest risk, and what would change your mind>")
 
 # حالت چهارم Eco: کارگرها فقط روی سه موتور ارزان (Haiku 5.5، GLM 5.3 Flash، GPT-6 Luna)؛ مدیرعامل (آرمان میرحسینی) Sonnet 5.5 با Opus 5.5 فقط جایگزین.
 ECO = {1: SO,
@@ -58,7 +65,8 @@ def _a(i, name, cat, phase, n, v, g, fb, role, mt=500):
 AGENTS = [
     _a(1, "آرمان میرحسینی (مدیرعامل)", "فرماندهی", "synth", GS, MY, MY, [FA, OP, GS, SO],
        "Chief's second engine. Read all specialist reports, find the strongest agreement and the strongest disagreement, "
-       "list at most 3 concrete risks and give a lean GO/WAIT/NO in at most 120 words. Do not average votes blindly: weigh by evidence in the brief.", 900),
+       "list at most 3 concrete risks and give a lean GO/WAIT/NO in at most 150 words. Do not average votes blindly: weigh by evidence in the brief. "
+       "You also supervise discipline: the script gives you a measured log of who ran, with which engine, when, and who failed or was late.", 900),
     _a(2, "Al Brooks", "سلاطین · پرایس‌اکشن", "pre", SO, SO, OP, [DP],
        "Al Brooks: read the setup bar by bar. Trend versus trading range, always-in direction, signal and entry bar quality, with-trend pullbacks, failed breakouts, trapped traders."),
     _a(3, "Larry Williams", "سلاطین · نوسان و تکنیکال", "pre", GF, GS, SO, [GLF],
@@ -150,7 +158,7 @@ def _parse(text):
     v = re.search(r"VERDICT\s*[:=]\s*\**\s*(GO|WAIT|NO|NA)\b", t, re.I)
     c = re.search(r"CONF\w*\s*[:=]\s*\**\s*(\d{1,3})", t, re.I)
     w = re.search(r"WHY\s*[:=]\s*(.+)", t, re.I | re.S)
-    why = re.sub(r"\s+", " ", (w.group(1) if w else t)).strip()[:300]
+    why = re.sub(r"\s+", " ", (w.group(1) if w else t)).strip()[:450]
     return (v.group(1).upper() if v else "NA"), (min(100, int(c.group(1))) if c else None), why
 
 def _http_call(model, messages, max_tokens, timeout):
@@ -176,7 +184,10 @@ def _http_call(model, messages, max_tokens, timeout):
                         parts.append(str(c["text"]))
             txt = "".join(parts)
         return str(txt), (j.get("usage") or {})
-    body = {"model": model, "messages": messages, "max_tokens": max_tokens}
+    # مدل‌های «تفکرکننده» (GLM، DeepSeek، Gemini و ...) بخشی از سقف توکن را صرف فکر کردن می‌کنند؛ سقف کم یعنی پاسخ خالی با HTTP 200.
+    # برای غیر Claude کف ۱۵۰۰ توکن می‌گذاریم؛ هزینه‌اش روی مدل‌های ارزان ناچیز است.
+    mt = int(max_tokens) if str(model).startswith("claude") else max(int(max_tokens), 1500)
+    body = {"model": model, "messages": messages, "max_tokens": mt}
     for _ in range(2):
         r = requests.post(base + "/v1/chat/completions", headers=h, json=body, timeout=timeout)
         if r.status_code == 400 and "max_tokens" in r.text and "max_tokens" in body:
@@ -191,16 +202,20 @@ def _http_call(model, messages, max_tokens, timeout):
         c = "".join(str(x.get("text", "")) if isinstance(x, dict) else str(x) for x in c)
     return str(c or ""), (j.get("usage") or {})
 
+def _envf(name, default):
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return float(default)
+
 def run_desk(brief, asset="", hooks=None, http=None, mode=None):
-    """تیم را اجرا می‌کند و متن گزارش مشورتی را برمی‌گرداند؛ هرگز استثنا نمی‌دهد."""
+    """تیم را در سه مرحله اجرا می‌کند و متن گزارش مشورتی را برمی‌گرداند؛ هرگز استثنا نمی‌دهد."""
     hooks = hooks or {}; http = http or _http_call
     mode = norm_mode(mode or os.environ.get("TA_MODE"))
-    try: share = float(os.environ.get("TA_DESK_SHARE", "0.45") or 0.45)
-    except ValueError: share = 0.45
-    try: wall = float(os.environ.get("TA_DESK_BUDGET_SEC", "150") or 150)
-    except ValueError: wall = 150.0
-    try: workers = max(1, int(os.environ.get("TA_DESK_WORKERS", "6") or 6))
-    except ValueError: workers = 6
+    share = _envf("TA_DESK_SHARE", 0.45)
+    wall = _envf("TA_DESK_BUDGET_SEC", 200)
+    workers = max(1, int(_envf("TA_DESK_WORKERS", 6)))
+    stagger = max(0.0, _envf("TA_DESK_STAGGER_SEC", 0.4))
     def cap():
         try: return float(hooks["cap"]())
         except Exception: return 0.0
@@ -213,9 +228,12 @@ def run_desk(brief, asset="", hooks=None, http=None, mode=None):
         except Exception: pass
     brief_t = _clip(brief); t0 = time.time()
 
-    def ask(a, system_extra, user, frac, mt):
-        rec = {"id": a["id"], "name": a["name"], "planned": a["models"][mode], "served": "", "status": "skipped",
-               "in": 0, "out": 0, "toman": 0, "verdict": "NA", "conf": None, "why": ""}
+    def rec_of(a, stage, status="skipped"):
+        return {"id": a["id"], "name": a["name"], "stage": stage, "planned": a["models"][mode], "served": "", "status": status,
+                "in": 0, "out": 0, "toman": 0, "verdict": "NA", "conf": None, "why": "", "start": None, "end": None}
+
+    def _ask(a, system_extra, user, frac, mt, stage):
+        rec = rec_of(a, stage)
         for m in chain(a, mode)[:3]:
             if over(frac) or time.time() - t0 > wall:
                 rec["status"] = "budget"; return rec
@@ -238,34 +256,59 @@ def run_desk(brief, asset="", hooks=None, http=None, mode=None):
             return rec
         return rec
 
-    team = [a for a in AGENTS if a["phase"] == "pre"]
-    user = f"ASSET: {asset}\nMODE: {mode}\n\nBRIEF:\n{brief_t}\n\n{FORMAT}"
-    recs = []
-    ex = cf.ThreadPoolExecutor(max_workers=workers)
-    futs = {ex.submit(ask, a, "", user, share, a["max_tokens"]): a for a in team}
-    done, pending = cf.wait(list(futs), timeout=wall)
-    for f in done:
-        try: recs.append(f.result())
-        except BaseException: pass
-    for f in pending: f.cancel()
-    ex.shutdown(wait=False, cancel_futures=True)
+    def ask(a, system_extra, user, frac, mt, delay, stage):
+        if delay: time.sleep(delay)
+        s = time.time() - t0
+        rec = _ask(a, system_extra, user, frac, mt, stage)
+        rec["start"] = round(s, 1); rec["end"] = round(time.time() - t0, 1)
+        return rec
+
+    def run_stage(stage, agents, user, extra, mt_of, frac, until):
+        out = []
+        if not agents: return out
+        ex = cf.ThreadPoolExecutor(max_workers=min(workers, len(agents)))
+        futs = {ex.submit(ask, a, extra, user, frac, mt_of(a), (k * stagger if k < workers else 0), stage): a for k, a in enumerate(agents)}
+        done, pending = cf.wait(list(futs), timeout=max(1.0, until - (time.time() - t0)))
+        for f in done:
+            try: out.append(f.result())
+            except BaseException: out.append(rec_of(futs[f], stage, "crash"))
+        for f in pending:
+            f.cancel(); out.append(rec_of(futs[f], stage, "timeout"))
+        ex.shutdown(wait=False, cancel_futures=True)
+        return out
+
+    sov = [a for a in AGENTS if a["phase"] == "pre" and a["id"] in SOVEREIGN_IDS]
+    team = [a for a in AGENTS if a["phase"] == "pre" and a["id"] not in SOVEREIGN_IDS]
+    head = f"ASSET: {asset}\nMODE: {mode}\n\nBRIEF:\n{brief_t}\n\n"
+    recs = run_stage("sovereigns", sov, head + FORMAT_S, SOV_RULE, lambda a: 700, share, 0.40 * wall)
+    recs += run_stage("team", team, head + FORMAT, "", lambda a: a["max_tokens"], share, 0.80 * wall)
     recs.sort(key=lambda r: r["id"])
     good = [r for r in recs if r["status"] in ("ok", "fallback") and r["verdict"] != "NA"]
     tally = {k: sum(1 for r in good if r["verdict"] == k) for k in ("GO", "WAIT", "NO")}
+    tally_sov = {k: sum(1 for r in good if r["verdict"] == k and r["id"] in SOVEREIGN_IDS) for k in ("GO", "WAIT", "NO")}
+
+    def disc_lines():
+        key = lambda r: (r["start"] if r["start"] is not None else 9999, r["id"])
+        return [f"{r['stage']} #{r['id']} {r['planned']}->{r['served'] or '-'} {r['status']} {r['start'] if r['start'] is not None else '-'}s..{r['end'] if r['end'] is not None else '-'}s {r['verdict']}"
+                for r in sorted(recs, key=key)]
 
     synth = None
-    sa = AGENTS[0]
-    if good and not over(min(0.6, share + 0.15)):
+    sa = AGENTS[0]; fr = min(0.6, share + 0.15)
+    if good and not over(fr):
         lines = "\n".join(f"[{r['id']} {r['name']}] {r['verdict']} {r['conf'] if r['conf'] is not None else '-'}: {r['why']}" for r in good)
-        su = (f"ASSET: {asset}\nMODE: {mode}\n\nBRIEF:\n{brief_t}\n\nSPECIALIST REPORTS:\n{lines}\n\n"
-              "Reply: LEAN: GO|WAIT|NO, then max 120 words.")
-        synth = ask(sa, "", su, min(0.6, share + 0.15), sa["max_tokens"])
+        su = (f"ASSET: {asset}\nMODE: {mode}\n\nBRIEF:\n{brief_t}\n\n"
+              f"SPECIALIST REPORTS (specialists 2-6 are the five sovereigns; they worked alone and independently):\n{lines}\n\n"
+              "DESK DISCIPLINE LOG (measured by the script, not opinions; format: stage #id planned->served status start..end verdict):\n"
+              + "\n".join(disc_lines()) + "\n\n"
+              "Reply: LEAN: GO|WAIT|NO, then max 150 words. Name any missing, failed or late specialist that could change the lean.")
+        synth = ask(sa, "", su, fr, sa["max_tokens"], 0, "chief")
         recs.append(synth)
 
     try:
         d = os.environ.get("TA_DATA", "data"); os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "desk_summary.json"), "w", encoding="utf-8") as f:
             json.dump({"run_id": os.environ.get("GITHUB_RUN_ID", ""), "mode": mode, "asset": str(asset), "tally": tally,
+                       "tally_sovereigns": tally_sov, "answered": len(good), "asked": len(sov) + len(team),
                        "seconds": round(time.time() - t0),
                        "agents": [{k: v for k, v in r.items() if k not in ("text", "why")} for r in recs]}, f, ensure_ascii=False)
     except Exception:
@@ -274,13 +317,21 @@ def run_desk(brief, asset="", hooks=None, http=None, mode=None):
     if not good:
         return ""
     hhmm = time.strftime("%H:%M", time.gmtime())
-    out = (f"\n\nDESK TEAM REPORTS ({len(good)} of {len(team)} specialists answered; asset {asset}; {hhmm} UTC; mode {mode}). "
+    sg = [r for r in good if r["id"] in SOVEREIGN_IDS]; og = [r for r in good if r["id"] not in SOVEREIGN_IDS]
+    fmt = lambda r, n: (f"- {r['name']} [{r['served']}]: {r['verdict']}" + (f" {r['conf']}" if r['conf'] is not None else "") + f" — {r['why'][:n]}")
+    out = (f"\n\nDESK TEAM REPORTS ({len(good)} of {len(sov) + len(team)} specialists answered; asset {asset}; {hhmm} UTC; mode {mode}). "
            "Advisory only: unverified model opinions based solely on the brief; Python levels and hard risk gates remain authoritative.\n"
            f"TALLY: GO {tally['GO']} / WAIT {tally['WAIT']} / NO {tally['NO']}\n")
-    out += "\n".join(f"- {r['name']} [{r['served']}]: {r['verdict']}" + (f" {r['conf']}" if r['conf'] is not None else "") + f" — {r['why'][:220]}" for r in good)
+    if sg:
+        out += f"\nSOVEREIGNS (each worked alone, unaveraged; {len(sg)} of {len(sov)} answered):\n" + "\n".join(fmt(r, 420) for r in sg) + "\n"
+    if og:
+        out += "\nRESEARCH TEAM:\n" + "\n".join(fmt(r, 200) for r in og) + "\n"
+    miss = [f"#{r['id']}:{r['status']}" for r in recs if r["id"] != 1 and r["status"] not in ("ok", "fallback")]
+    if miss:
+        out += "\nNOT ANSWERED: " + ", ".join(miss) + "\n"
     if synth and synth.get("text"):
-        out += f"\n\nCHIEF'S SECOND-ENGINE SYNTHESIS [{synth['served']}]:\n{synth['text'][:900]}"
-    return out[:6500]
+        out += f"\nCHIEF'S SECOND-ENGINE SYNTHESIS [{synth['served']}]:\n{synth['text'][:900]}"
+    return out[:9000]
 
 if __name__ == "__main__":
     mode = norm_mode(sys.argv[2] if len(sys.argv) > 2 else "Normal")
