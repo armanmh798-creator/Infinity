@@ -16,9 +16,9 @@ OP, SO, HA = "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"
 FA, MY = "claude-fable-5-2", "claude-mythos-5-2"
 GS, GF, GA = "gpt-6.2-sol", "gemini-3.8-flash", "gemini-4-argon"
 GK = "grok-4.7"
-DP, DF = "deepseek-v4-pro", "deepseek-v4-flash"
-QP, QF = "qwen-3.8-plus", "qwen-3.8-flash"
-GL, GLF, MM = "glm-5.3", "glm-5.3-flash", "minimax-m3.1-flash"
+DP, DF = "deepseek-v4-pro", "deepseek-v4.1-flash"
+QP, QF = "qwen3.7-plus", "qwen3.8-flash"
+GL, GLF, MM = "glm-5.3", "glm-5.3-flashx", "MiniMax-M3.1-Flash"
 LU = "gpt-6-luna"
 
 # قیمت برآوردی هر هزار توکن (تومان): (ورودی، خروجی). قیمت Luna از برازش روی گزارش مصرف خود شما (۷۹ تماس) است و تقریبی. فقط برای سقف هزینه؛ عدد نهایی در صفحهٔ مصرف 1xAi است.
@@ -37,7 +37,7 @@ SYSTEM_BASE = (
 FORMAT = ("Reply in exactly this format, English, max 70 words in total:\n"
           "VERDICT: GO|WAIT|NO|NA\nCONF: 0-100\nWHY: <one or two sentences>")
 
-# حالت چهارم Eco: کارگرها فقط روی سه موتور ارزان (Haiku 5.5، GLM 5.3 Flash، GPT-6 Luna)؛ مدیرعامل Sonnet 5.5 با Opus 5.5 فقط جایگزین.
+# حالت چهارم Eco: کارگرها فقط روی سه موتور ارزان (Haiku 5.5، GLM 5.3 FlashX، GPT-6 Luna)؛ مدیرعامل (آرمان میرحسینی) Sonnet 5.5 با Opus 5.5 فقط جایگزین.
 ECO = {1: SO,
        2: HA, 3: LU, 4: GLF, 5: HA, 6: LU, 7: LU, 8: HA, 9: LU, 10: HA,
        11: GK,
@@ -50,7 +50,7 @@ def _a(i, name, cat, phase, n, v, g, fb, role, mt=500):
             "fb": fb, "role": role, "max_tokens": mt}
 
 AGENTS = [
-    _a(1, "مدیرعامل (موتور دوم)", "فرماندهی", "synth", GS, MY, MY, [FA, OP, GS, SO],
+    _a(1, "آرمان میرحسینی (مدیرعامل)", "فرماندهی", "synth", GS, MY, MY, [FA, OP, GS, SO],
        "Chief's second engine. Read all specialist reports, find the strongest agreement and the strongest disagreement, "
        "list at most 3 concrete risks and give a lean GO/WAIT/NO in at most 120 words. Do not average votes blindly: weigh by evidence in the brief.", 900),
     _a(2, "Al Brooks", "سلاطین · پرایس‌اکشن", "pre", SO, SO, OP, [DP],
