@@ -22,7 +22,9 @@ MODES = {"normal": "Normal", "نرمال": "Normal",
 ASSETS = {"gold": "Gold", "xau": "Gold", "xauusd": "Gold", "طلا": "Gold",
           "all": "ALL", "همه": "ALL", "nas100": "NAS100", "eurusd": "EURUSD",
           "gbpusd": "GBPUSD", "btc": "BTC", "eth": "ETH", "doge": "DOGE",
-          "xrp": "XRP", "ada": "ADA", "sol": "SOL", "trx": "TRX"}
+          "xrp": "XRP", "ada": "ADA", "sol": "SOL", "trx": "TRX",
+          "allcrypto": "ALLCRYPTO", "crypto": "ALLCRYPTO", "کریپتو": "ALLCRYPTO", "همهکریپتو": "ALLCRYPTO",
+          "allforex": "ALLFOREX", "forex": "ALLFOREX", "فارکس": "ALLFOREX", "همهفارکس": "ALLFOREX"}
 MINUTES = ("15", "20", "30", "45", "60")
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 HELP = ("فرمان‌ها:\n"
@@ -30,6 +32,7 @@ HELP = ("فرمان‌ها:\n"
         "/run vip gold 30 ← حالت، دارایی و دقیقهٔ دلخواه\n"
         "حالت: normal، vip، گلد، eco (یا نرمال، وی‌آی‌پی، اکو)\n"
         "دارایی: gold، btc، eth، all، nas100، eurusd، gbpusd، doge، xrp، ada، sol، trx\n"
+        "گروهی: allcrypto (کریپتو: btc eth sol xrp ada doge trx) · allforex (فارکس: eurusd gbpusd gold)\n"
         "دقیقه: 15، 20، 30، 45، 60")
 
 
@@ -137,7 +140,6 @@ def main():
     # تأیید همهٔ پیام‌های خوانده‌شده تا دوباره اجرا نشوند
     tg("getUpdates", {"offset": last_id + 1, "limit": 1})
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
