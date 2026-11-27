@@ -13,12 +13,12 @@ WORKFLOW = os.environ.get("TA_WORKFLOW_FILE", "ta.yml").strip() or "ta.yml"
 REF = os.environ.get("TA_WORKFLOW_REF", "main").strip() or "main"
 MAX_AGE_SEC = int(os.environ.get("TA_CMD_MAX_AGE_SEC", "1800"))
 
-# حالت = ورودی mode در ta.yml
+# حالت = ورودی mode در ta.yml (کلمهٔ «گلد» حالت است؛ «طلا/gold» دارایی است)
 MODES = {"normal": "Normal", "نرمال": "Normal",
          "vip": "VIP", "ویآیپی": "VIP",
-         "gold": "Gold", "گلد": "Gold",
+         "گلد": "Gold",
          "eco": "Eco", "اکو": "Eco"}
-# دارایی = ورودی asset در ta.yml (فقط گزینه‌های موجود روی main)
+# دارایی = ورودی asset در ta.yml
 ASSETS = {"gold": "Gold", "xau": "Gold", "xauusd": "Gold", "طلا": "Gold",
           "all": "ALL", "همه": "ALL", "nas100": "NAS100", "eurusd": "EURUSD",
           "gbpusd": "GBPUSD", "btc": "BTC", "eth": "ETH", "doge": "DOGE",
@@ -28,7 +28,7 @@ DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "012345678901
 HELP = ("فرمان‌ها:\n"
         "/run ← حالت Normal روی Gold تا ۶۰ دقیقه\n"
         "/run vip gold 30 ← حالت، دارایی و دقیقهٔ دلخواه\n"
-        "حالت: normal، vip، gold، eco (یا نرمال، گلد، اکو، وی‌آی‌پی)\n"
+        "حالت: normal، vip، گلد، eco (یا نرمال، وی‌آی‌پی، اکو)\n"
         "دارایی: gold، btc، eth، all، nas100، eurusd، gbpusd، doge، xrp، ada، sol، trx\n"
         "دقیقه: 15، 20، 30، 45، 60")
 
@@ -69,6 +69,7 @@ def send(text):
 
 
 def parse(args):
+    """حالت و دارایی جدا: کلمهٔ حالت فقط در MODES دنبال می‌شود، پس «gold» همیشه دارایی است."""
     mode = asset = mins = None
     for raw in args:
         t = norm(raw)
