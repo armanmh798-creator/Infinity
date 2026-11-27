@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "حالت اجرا: Normal، VIP یا Gold (Gold برای تخفیف چهارروزهٔ Claude)"
+        description: "حالت اجرا: Normal، VIP، Gold یا Eco (Eco ارزان‌ترین است؛ Gold برای تخفیف چهارروزهٔ Claude)"
         type: choice
         required: false
         default: "Normal"
@@ -15,6 +15,7 @@ on:
           - Normal
           - VIP
           - Gold
+          - Eco
       asset:
         description: "دارایی (پیش‌فرض Gold)"
         type: choice
@@ -87,6 +88,14 @@ jobs:
         run: python tools/patch_engine.py engine.py run.py
         env:
           TA_LLM_PROVIDER: "1xai"
+      - name: Apply desk patch (25 agents)
+        # اگر وصله اعمال نشود، اجرا با موتور قبلی ادامه می‌یابد و در گزارش تلگرام هشدار می‌آید.
+        run: |
+          if python tools/patch_desk.py engine.py; then
+            echo "DESK_PATCHED=1" >> "$GITHUB_ENV"
+          else
+            echo "DESK_PATCHED=0" >> "$GITHUB_ENV"
+          fi
       - name: Run Infinity scan
         run: python run.py
         env:
@@ -99,6 +108,8 @@ jobs:
           GROK_MODEL: "grok-4.7"
           TA_X_SCOUT: "1"
           TA_GROK_FALLBACK: "0"
+          # تیم ۲۵ایجنت (tools/desk25.py)؛ برای خاموش‌کردن، متغیر TA_DESK را در Variables روی 0 بگذارید
+          TA_DESK: ${{ vars.TA_DESK || '1' }}
           # Gold: جایگاه سریع روی Sonnet و جایگاه عمیق روی Opus (تخفیف چهارروزهٔ Claude)
           CLAUDE_HAIKU_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-sonnet-5-5' || vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
           CLAUDE_SONNET_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-opus-5-5' || vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
@@ -106,17 +117,17 @@ jobs:
           CLAUDE_FABLE_MODEL: ${{ vars.CLAUDE_FABLE_MODEL || 'claude-fable-5-2' }}
           CLAUDE_MYTHOS_MODEL: ${{ vars.CLAUDE_MYTHOS_MODEL || 'claude-mythos-5-2' }}
           CLAUDE_SONNET_EFFORT: ${{ vars.CLAUDE_SONNET_EFFORT || 'medium' }}
-          # مدیرعامل در هر سه حالت یکسان: سه تماس Fable، بعد Opus
-          TA_CEO_MODEL: ${{ vars.TA_CEO_MODEL || 'claude-fable-5-2' }}
-          TA_CEO_FALLBACK_MODEL: ${{ vars.TA_CEO_FALLBACK_MODEL || 'claude-opus-5-5' }}
+          # مدیرعامل: Normal/VIP/Gold سه تماس Fable بعد Opus؛ Eco سه تماس Sonnet 5.5 بعد Haiku
+          TA_CEO_MODEL: ${{ github.event.inputs.mode == 'Eco' && 'claude-sonnet-5-5' || vars.TA_CEO_MODEL || 'claude-fable-5-2' }}
+          TA_CEO_FALLBACK_MODEL: ${{ github.event.inputs.mode == 'Eco' && 'claude-haiku-5-5' || vars.TA_CEO_FALLBACK_MODEL || 'claude-opus-5-5' }}
           TA_CEO_MAX_CALLS: ${{ vars.TA_CEO_MAX_CALLS || '3' }}
-          # بازبینی Mythos و Fable: در VIP و Gold روشن، در Normal خاموش
+          # بازبینی Mythos و Fable: در VIP و Gold روشن، در Normal و Eco خاموش
           TA_FRONTIER_TACTICAL: ${{ (github.event.inputs.mode == 'VIP' || github.event.inputs.mode == 'Gold') && '1' || '0' }}
           TA_CLAUDE_FALLBACK: "0"
           TA_CLAUDE_MAX_TOKENS: "4096"
           TA_MODE: ${{ github.event.inputs.mode || 'Normal' }}
           # سقف هزینهٔ هر اجرا (تومان، برآورد با قیمت لیست)؛ عدد اولیهٔ ایمنی، بعد از چند تست از Settings ← Variables تنظیم شود
-          TA_COST_CAP_TOMAN: ${{ github.event.inputs.mode == 'Gold' && (vars.TA_CAP_GOLD || '350000') || github.event.inputs.mode == 'VIP' && (vars.TA_CAP_VIP || '250000') || (vars.TA_CAP_NORMAL || '150000') }}
+          TA_COST_CAP_TOMAN: ${{ github.event.inputs.mode == 'Gold' && (vars.TA_CAP_GOLD || '350000') || github.event.inputs.mode == 'VIP' && (vars.TA_CAP_VIP || '250000') || github.event.inputs.mode == 'Eco' && (vars.TA_CAP_ECO || '80000') || (vars.TA_CAP_NORMAL || '150000') }}
           TA_LLM_PROVIDER: "1xai"
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
@@ -190,6 +201,17 @@ jobs:
                   out.write(f"\nارسال اعلان ntfy ناموفق بود ({type(ex).__name__}).\n")
           out.close()
           PY
+      - name: Telegram report
+        if: always()
+        # وضعیت اتصال موتورها و هزینه؛ متن پرامپت و پاسخ ایجنت‌ها فرستاده نمی‌شود. بدون Secrets فقط پیش‌نمایش چاپ می‌شود.
+        run: python3 tools/tg_notify.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TA_DATA: ${{ github.workspace }}/data
+          JOB_STATUS: ${{ job.status }}
+          RUN_MODE: ${{ github.event.inputs.mode || 'Normal' }}
+          RUN_ASSET: ${{ github.event.inputs.asset || vars.TA_ASSET_DEFAULT || 'Gold' }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
