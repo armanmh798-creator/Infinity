@@ -89,13 +89,20 @@ jobs:
         env:
           TA_LLM_PROVIDER: "1xai"
       - name: Apply desk patch (25 agents)
-        # اگر وصله اعمال نشود، اجرا با موتور قبلی ادامه می‌یابد و در گزارش تلگرام هشدار می‌آید.
-        run: |
-          if python tools/patch_desk.py engine.py; then
-            echo "DESK_PATCHED=1" >> "$GITHUB_ENV"
-          else
-            echo "DESK_PATCHED=0" >> "$GITHUB_ENV"
-          fi
+        # اگر وصله اعمال نشود اجرا همین‌جا با خطا می‌ایستد؛ با موتور قبلی ادامه نمی‌دهد.
+        run: python tools/patch_desk.py engine.py
+      - name: Check engines (tiny probe calls)
+        # هر موتور تیم با یک تماس بسیار کوچک امتحان می‌شود و نتیجه به تلگرام می‌رود؛ هزینه چند صد تومان.
+        continue-on-error: true
+        run: python tools/check_engines.py
+        env:
+          ONE_XAI_API_KEY: ${{ secrets.ONE_XAI_API_KEY }}
+          ONE_XAI_BASE_URL: "https://1xai.ir"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TA_MODEL_MAP: ${{ vars.TA_MODEL_MAP }}
+          TA_CHECK: ${{ vars.TA_CHECK || '1' }}
+          TA_DATA: ${{ github.workspace }}/data
       - name: Run Infinity scan
         run: python run.py
         env:
@@ -110,6 +117,7 @@ jobs:
           TA_GROK_FALLBACK: "0"
           # تیم ۲۵ایجنت (tools/desk25.py)؛ برای خاموش‌کردن، متغیر TA_DESK را در Variables روی 0 بگذارید
           TA_DESK: ${{ vars.TA_DESK || '1' }}
+          TA_MODEL_MAP: ${{ vars.TA_MODEL_MAP }}
           # Gold: جایگاه سریع روی Sonnet و جایگاه عمیق روی Opus (تخفیف چهارروزهٔ Claude)
           CLAUDE_HAIKU_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-sonnet-5-5' || vars.CLAUDE_HAIKU_MODEL || 'claude-haiku-5-5' }}
           CLAUDE_SONNET_MODEL: ${{ github.event.inputs.mode == 'Gold' && 'claude-opus-5-5' || vars.CLAUDE_SONNET_MODEL || 'claude-sonnet-5-5' }}
