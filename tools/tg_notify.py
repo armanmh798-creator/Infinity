@@ -29,6 +29,29 @@ def _load(name):
         return None
 
 
+def _files_diag():
+    """وضعیت فایل‌های گزارش: وجود دارند؟ مال همین اجرا هستند؟ (بدون محتوا)"""
+    try:
+        names = sorted(os.listdir(DATA))
+    except Exception:
+        return ["📂 پوشهٔ داده پیدا نشد؛ مسیر TA_DATA را در workflow بررسی کنید."]
+    out = ["📂 وضعیت فایل‌های گزارش:"]
+    for name in ("desk_summary.json", "cost_summary.json"):
+        if name not in names:
+            out.append(f"  • {name}: فایل وجود ندارد (احتمالاً این مرحله اجرا نشده یا قبل از ساخت فایل متوقف شده)")
+            continue
+        try:
+            rid = json.load(open(os.path.join(DATA, name), encoding="utf-8")).get("run_id")
+        except Exception:
+            out.append(f"  • {name}: فایل هست ولی خوانده نشد (JSON خراب)")
+            continue
+        if RUN and str(rid) != str(RUN):
+            out.append(f"  • {name}: مال اجرای دیگری است ({rid}) و برای این اجرا استفاده نشد")
+        else:
+            out.append(f"  • {name}: ✅ مال همین اجرا")
+    return out
+
+
 def _conf(a):
     c = a.get("conf")
     return (fa(c) + "٪") if c is not None else "—"
@@ -61,7 +84,7 @@ def _diagnosis(desk, cost):
     if not cost or calls == 0:
         reasons.append("هیچ تماس پولی انجام نشد؛ موتورها عملاً اجرا نشده‌اند.")
     if desk is None and os.environ.get("DESK_PATCHED") != "0":
-        reasons.append("گزارش تیم ساخته نشد؛ احتمال خطا در اجرای موتورها یا قطع زودهنگام.")
+        reasons.append("گزارش تیم برای این اجرا در دسترس نیست (فایل desk_summary.json بالا را ببینید).")
     if desk:
         agents = desk.get("agents", [])
         if agents and not any(a.get("status") in ("ok", "fallback") for a in agents):
@@ -125,6 +148,9 @@ def build():
         L.append("💰 هیچ تماس پولی ثبت نشد.")
     L.append("ℹ️ برآورد با قیمت لیست؛ مبلغ نهایی در صفحهٔ مصرف 1xAi.")
     L.append("")
+    # اگر گزارش تیم یا هزینه مال این اجرا نبود، دقیقاً نشان داده شود کدام فایل مشکل دارد
+    if desk is None or cost is None:
+        L += _files_diag() + [""]
     L += _diagnosis(desk, cost)
     return "\n".join(L)[:3800]
 
