@@ -1,9 +1,9 @@
 # Infinity Trader v36 · موتور واحد چندمدلی. همین کد هم در گیت‌هاب (run.py) و هم در سلول ۲ نوت‌بوک کولب اجرا می‌شود؛ هر تغییری فقط یک‌بار و همین‌جا داده شود.
 import os, re, time, json, getpass, requests
 
-LLM_PROVIDER = os.environ.get("TA_LLM_PROVIDER", "anthropic").strip().lower()  # Claude Sonnet/Haiku موتور اصلی؛ Gemini پشتیبان
+LLM_PROVIDER = os.environ.get("TA_LLM_PROVIDER", "1xai").strip().lower()  # Claude Sonnet/Haiku موتور اصلی؛ Gemini پشتیبان
 LLM_PROVIDER = str(LLM_PROVIDER).strip().lower()
-if LLM_PROVIDER not in ("anthropic", "1xai", "grok", "google", "rayegan"): raise ValueError('TA_LLM_PROVIDER باید 1xai، anthropic، grok، google یا rayegan باشد')
+if LLM_PROVIDER != "1xai": raise ValueError('TA_LLM_PROVIDER فقط باید 1xai باشد؛ Gemini/Google/Grok مستقیم و موتور رایگان حذف شده‌اند و همهٔ مدل‌ها با ONE_XAI_API_KEY می‌آیند')
 import warnings; warnings.filterwarnings("ignore")
 from IPython.display import display, HTML
 
@@ -23,8 +23,6 @@ def _msg(c, text):
 
 os.chdir(os.environ.get("TA_REPO_DIR", "TradingAgents"))      # GitHub: نصب را workflow انجام داده است
 
-# ═══════════════ (ادغام‌شده) از اینجا: مرحله ۲ · کلید Gemini ═══════════════
-# ═══════════════ مرحله ۲ · کلید Gemini + انتخاب هوشمند و کم‌هزینهٔ مدل‌ها ═══════════════
 import os, re, time, getpass, base64, io, wave, requests
 import html as _hl
 from IPython.display import display, HTML
@@ -36,19 +34,9 @@ if '_msg' not in globals():
     def _msg(c, text):
         display(HTML(f"<div dir='rtl' style='font-family:Vazirmatn,Tahoma,sans-serif;border-radius:10px;padding:7px 13px;margin:5px 0;border-right:5px solid {c};background:{c}1a;white-space:pre-wrap'>{_hl.escape(text)}</div>"))
 
-# ═══════════════ گزینهٔ Rayegan · دروازهٔ محلی مدل‌های رایگان (فقط وقتی LLM_PROVIDER = "rayegan" ؛ پیش‌فرض Gemini است) ═══════════════
-import json, subprocess
-
-RG_REPO = "https://github.com/ssepehrnoush/rayegan"
-RG_COMMIT = "f33810cbad300488a437f29029a1b6a5db6ae65a"   # نسخه‌ای که کدش بررسی شد؛ کد روی همین نسخه قفل است تا تغییر بعدیِ مخزن روی کلیدهای شما اجرا نشود
-RG_ALLOW_LATEST = False                                   # فقط اگر آگاهانه می‌خواهید آخرین نسخهٔ بررسی‌نشده را بگیرید True کنید
-RG_PORT = 8787
-RG_DIR = os.path.expanduser("~/rayegan_gw")
-RG_CONFIG = {"timeoutMs": 90000, "maxAttempts": 6}        # بدون هیچ کلیدی؛ کلیدها فقط از متغیر محیطیِ همین پردازش می‌روند
-RG_SECRETS = ["GROQ_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY", "NVIDIA_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]
-RG_WAIT_SEC = 90
-_RG_PROC = globals().get("_RG_PROC")
-
+# ═══════════════ v38 · فقط 1xAI (ONE_XAI_API_KEY) ═══════════════
+# Gemini مستقیم (Google API)، چرخش کلید Google، آزمون/انتخاب مدل Gemini و موتور رایگان Rayegan کاملاً از موتور حذف شدند.
+# Gemini 3.8 / Gemini 4 (پولی) فقط از مسیر 1xAI و روتر ۲۵ عاملی کار می‌کنند.
 def _rg_secret(name):
     v = os.environ.get(name, "")
     if not v:
@@ -59,555 +47,27 @@ def _rg_secret(name):
             v = ""
     return str(v).strip().strip('"').strip("'")
 
-def _rg_get(path, timeout=3):
-    try:
-        return requests.get(f"http://127.0.0.1:{RG_PORT}{path}", timeout=timeout).json()
-    except Exception:
-        return None
+DEEP = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5").strip() or "claude-sonnet-5-5"      # برچسب «عمیق» برای تماس‌های قدیمی؛ مدل واقعی هر نقش را روتر می‌دهد
+QUICK = os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5").strip() or "claude-haiku-5-5"
+_GKEYS = []; _GK = {"i": 0, "exhausted": False}      # بی‌استفاده؛ فقط برای سازگاری با کد قدیمی
+def _gem_resilient(*a, **k): raise RuntimeError('Gemini مستقیم (Google API) حذف شده است؛ همهٔ مدل‌ها فقط از مسیر 1xAI می‌آیند.')
+def rg_ensure(*a, **k): return None
 
-def _rg_git(*a):
-    return subprocess.run(["git", "-C", RG_DIR, *a], capture_output=True, text=True)
+# Claude Sonnet برای deep و Haiku برای quick؛ Gemini فقط مسیر پشتیبان است.
+if LLM_PROVIDER in ("anthropic", "1xai"):
+    _claude_api = _rg_secret("ONE_XAI_API_KEY") if LLM_PROVIDER == "1xai" else _rg_secret("ANTHROPIC_API_KEY")
+    if not _claude_api: raise RuntimeError(("ONE_XAI_API_KEY" if LLM_PROVIDER == "1xai" else "ANTHROPIC_API_KEY") + " در GitHub Secrets تنظیم نشده است؛ موتور Claude اجرا متوقف شد.")
+    _sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5").strip() or "claude-sonnet-5-5"
+    _haiku = os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5").strip() or "claude-haiku-5-5"
+    os.environ["ANTHROPIC_API_KEY"] = _claude_api
+    if LLM_PROVIDER == "1xai":
+        os.environ["ANTHROPIC_BASE_URL"] = os.environ.get("CLAUDE_BASE_URL", "https://1xai.ir/anthropic").rstrip("/")
+    os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "anthropic"
+    os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _sonnet
+    os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _haiku
+    os.environ["TRADINGAGENTS_ANTHROPIC_EFFORT"] = os.environ.get("CLAUDE_SONNET_EFFORT", "medium")
+    print(f"🤖 مدل‌های اصلی: کارهای عمیق/حساس={_sonnet}؛ کارهای سریع و پرتکرار={_haiku}؛ فقط 1xAI.")
 
-def _rg_launch():
-    """کد را (قفل‌شده روی RG_COMMIT) می‌گیرد، گیت‌وی را در پس‌زمینه بالا می‌آورد و تا آماده‌شدن صبر می‌کند. وضعیت /status را برمی‌گرداند."""
-    global _RG_PROC
-    try:
-        nv = subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip()
-        if int(nv.lstrip("v").split(".")[0]) < 18: raise ValueError(nv)
-    except Exception:
-        raise RuntimeError("Node.js نسخهٔ ۱۸ یا بالاتر روی این Colab پیدا نشد؛ Rayegan بدون آن اجرا نمی‌شود. پیام را برای من بفرستید.")
-    if not os.path.isdir(os.path.join(RG_DIR, ".git")):
-        r = subprocess.run(["git", "clone", "-q", RG_REPO, RG_DIR], capture_output=True, text=True)
-        if r.returncode: raise RuntimeError("دریافت Rayegan ناموفق بود:\n" + r.stderr[-400:])
-    if _rg_git("rev-parse", "HEAD").stdout.strip() != RG_COMMIT:
-        if _rg_git("checkout", "-q", RG_COMMIT).returncode:
-            _rg_git("fetch", "-q", "origin", RG_COMMIT); _rg_git("checkout", "-q", RG_COMMIT)
-        if _rg_git("rev-parse", "HEAD").stdout.strip() != RG_COMMIT:
-            if not RG_ALLOW_LATEST: raise RuntimeError("نسخهٔ بررسی‌شدهٔ Rayegan قابل‌دریافت نبود و برای امنیت ادامه نمی‌دهم (RG_ALLOW_LATEST = False).")
-            _msg("#d99a00", "⚠ آخرین نسخهٔ بررسی‌نشدهٔ Rayegan استفاده می‌شود.")
-    open(os.path.join(RG_DIR, "rayegan.json"), "w").write(json.dumps({**RG_CONFIG, "port": RG_PORT}))
-    env = dict(os.environ)
-    for n in RG_SECRETS:
-        v = _rg_secret(n)
-        if not v and n == "GEMINI_API_KEY": v = _rg_secret("GOOGLE_API_KEY")      # همان کلید Gemini قبلی، اگر در Secrets دارید
-        if v: env[n] = v
-    p = subprocess.Popen(["node", "src/cli.js", "--port", str(RG_PORT)], cwd=RG_DIR, env=env, stdout=open(os.path.join(RG_DIR, "rayegan.log"), "ab"), stderr=subprocess.STDOUT, start_new_session=True)
-    _RG_PROC = p
-    for _ in range(RG_WAIT_SEC):
-        time.sleep(1)
-        if p.poll() is not None:
-            tail = open(os.path.join(RG_DIR, "rayegan.log"), errors="ignore").read()[-500:]
-            raise RuntimeError("Rayegan بلافاصله بسته شد:\n" + tail)
-        st = _rg_get("/status")
-        if st is not None: return st
-    raise RuntimeError(f"Rayegan تا {RG_WAIT_SEC} ثانیه آماده نشد (احتمالاً اینترنت یا فیلتر).")
-
-def rg_ensure():
-    """اگر گیت‌وی خاموش شده بود (مثلاً Colab ریست شد) دوباره بالا می‌آورد."""
-    st = _rg_get("/status", 2)
-    return st if st is not None else _rg_launch()
-
-_RG_FA = {"ok": "✅ فعال", "needs-key": "🔑 کلید ندارد", "blocked": "⛔ ۴۰۳ (بسته)", "bad-key": "❌ کلید غلط", "unreachable": "⚠ وصل نشد"}
-
-def _rg_show(st):
-    rows = ''.join(f"<tr><td style='padding:3px 10px'>{_hl.escape(str(p.get('id')))}</td><td style='padding:3px 10px'>{_hl.escape(_RG_FA.get(p.get('state'), str(p.get('state'))))}</td>"
-                   f"<td style='padding:3px 10px'>{p.get('using', '') if p.get('state') == 'ok' else ''}</td></tr>" for p in st.get("providers", []))
-    top = ', '.join(c['id'] for c in st.get("chain", [])[:3]) or '—'
-    display(HTML("<div dir='rtl' style='font-family:Vazirmatn,Tahoma,sans-serif;margin:6px 0'>"
-                 f"<table style='border-collapse:collapse;direction:ltr;text-align:left'><tr><td style='padding:3px 10px'><b>سرویس</b></td><td style='padding:3px 10px'><b>وضعیت</b></td><td style='padding:3px 10px'><b>مدل</b></td></tr>{rows}</table>"
-                 f"<div style='margin-top:6px'>مدل‌های آمادهٔ زنجیره: <b>{st.get('available', 0)}</b> · اولین‌ها: <span dir='ltr'>{_hl.escape(top)}</span></div></div>"))
-
-if LLM_PROVIDER == "rayegan":
-    _ui("#e58a00", "#5c3500", "🆓", "مرحله ۲ · دروازهٔ Rayegan (مدل‌های رایگان)", "بدون کلید هم کار می‌کند؛ هر کلید رایگانی که در Colab Secrets بگذارید به زنجیره اضافه می‌شود")
-    _old = _rg_get("/status", 2)
-    if _old is not None and _RG_PROC is not None and _RG_PROC.poll() is None:      # اجرای دوباره: برای خواندن کلیدهای تازه، گیت‌وی قبلی بسته و دوباره ساخته می‌شود
-        _RG_PROC.terminate(); time.sleep(1.5); _old = None
-    _st = _old if _old is not None else _rg_launch()
-    if _old is not None: _msg("#d99a00", "ℹ یک گیت‌وی از قبل روشن بود و همان استفاده می‌شود (برای خواندن کلیدهای تازه، Runtime را Restart کنید).")
-    _rg_show(_st)
-    if not _st.get("available"):
-        _msg("#e5484d", "❌ هیچ مدلی در دسترس نیست. معمولاً یعنی از این شبکه به سرویس‌های رایگان نمی‌رسد. فایل گزارش: " + os.path.join(RG_DIR, "rayegan.log") + "\nپیام بالا را برای من بفرستید.")
-        raise RuntimeError("Rayegan: no model available")
-    if not any(p.get("state") == "ok" and not p.get("keyless") for p in _st.get("providers", [])):
-        _msg("#d99a00", "ℹ فقط سرویس‌های بدون‌کلید فعال‌اند (سقف ساعتی کم). برای سهمیهٔ بیشتر در Secrets کلید بگذارید: GROQ_API_KEY، MISTRAL_API_KEY، CEREBRAS_API_KEY، OPENROUTER_API_KEY، NVIDIA_API_KEY، CLOUDFLARE_API_TOKEN (+CLOUDFLARE_ACCOUNT_ID)، GEMINI_API_KEY.")
-    try:                                                                      # یک تماس واقعی کوچک
-        _r = requests.post(f"http://127.0.0.1:{RG_PORT}/v1/chat/completions", json={"model": "auto", "messages": [{"role": "user", "content": "Reply with: ok"}]}, timeout=(5, 150))
-    except Exception as _e:
-        raise RuntimeError(f"تماس آزمایشی با Rayegan شکست خورد ({type(_e).__name__})") from None
-    if _r.status_code != 200:
-        _msg("#e5484d", f"❌ تماس آزمایشی ناموفق (HTTP {_r.status_code}): {_r.text[:240]}")
-        raise RuntimeError("Rayegan test call failed")
-    _who = f"{_r.headers.get('x-rayegan-provider', '?')}/{_r.headers.get('x-rayegan-model', '?')}"
-    os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'openai_compatible'
-    os.environ['TRADINGAGENTS_LLM_BACKEND_URL'] = f"http://127.0.0.1:{RG_PORT}/v1"
-    os.environ['OPENAI_COMPATIBLE_API_KEY'] = 'rayegan'
-    os.environ['TRADINGAGENTS_DEEP_THINK_LLM'] = 'auto'
-    os.environ['TRADINGAGENTS_QUICK_THINK_LLM'] = 'auto'
-    os.environ['TRADINGAGENTS_MAX_DEBATE_ROUNDS'] = '2'
-    os.environ['TRADINGAGENTS_MAX_RISK_ROUNDS'] = '1'
-    os.environ['TRADINGAGENTS_LLM_MAX_RETRIES'] = '5'
-    DEEP = QUICK = 'auto'; _lvl = '-'
-    _msg('#30a46c', f"✅ آماده · همهٔ عامل‌ها از طریق Rayegan (مدل «auto») · تماس آزمایشی را «{_who}» جواب داد. سلول ۲ را اجرا کنید.\n⚠ مدل‌های رایگان ناهمگون‌اند (هر تماس ممکن است مدل دیگری جواب دهد) و از Gemini ضعیف‌تر؛ سیگنال‌ها را با احتیاط بیشتری بخوانید. سقف مصرف هر سرویس در داشبورد http://127.0.0.1:{RG_PORT}/ دیده می‌شود.")
-
-if LLM_PROVIDER != "rayegan":
-    _ui("#7c4dff", "#341f7a", "🔑", "مرحله ۲ · کلید Gemini و انتخاب مدل", "کلید از Colab Secrets (نام GOOGLE_API_KEY) خوانده می‌شود؛ اگر نبود در کادر بچسبانید و Enter بزنید")
-
-    # ── تنظیمات قابل‌تغییر (معمولاً دست نزنید) ──
-    THINK_TARGET = 'high'          # سقف سطح Thinking: high | medium | low  (high دقیق‌تر ولی کندتر و پرمصرف‌تر است؛ اگر Timeout دیدید medium بگذارید)
-    MAX_TESTS_PER_TIER = 2         # حداکثر تعداد مدلی که از هر رده (Pro / Flash / Flash-Lite) آزمایش می‌شود (+ بهترین مدل پایدار آن رده اگر هر دو Preview بودند)؛ سقف مصرف، و تضمین اینکه رد شدن یک رده جلوی آزمایش رده بعدی را نگیرد
-    FORCE_DEEP = None              # اختیاری، مثلاً 'gemini-2.5-pro'؛ باید در فهرست واقعی API باشد و آزمایش را رد کند
-    FORCE_QUICK = None
-    _BASE = "https://generativelanguage.googleapis.com/v1beta"
-    _LEVELS = ['minimal', 'low', 'medium', 'high']
-
-    # ── ۱) کلید: Colab Secrets ← در غیر این صورت getpass. کلید هرگز چاپ یا ذخیرهٔ فایلی نمی‌شود ──
-    # ── چرخش کلیدها (v24): GOOGLE_API_KEY ← اگر خطای سهمیه/دسترسی داد ← GOOGLE_API_KEY_2 ← GOOGLE_API_KEY_3 ← دوباره اولی ──
-    # اگر هر سه کلید «پشت‌سرهم» شکست بخورند (یعنی بین‌شان هیچ تماس موفقی نبوده)، یک اعلان فوری به گوشی می‌رود تا کلید جدید اضافه کنید.
-    import threading as _th
-    _GK_NAMES = ['GOOGLE_API_KEY'] + [f'GOOGLE_API_KEY_{_i}' for _i in range(2, 11)]
-    _GKEYS = []                                          # [(نام Secret، مقدار)] به همین ترتیب؛ خالی یا تکراری حذف می‌شود
-    for _n in _GK_NAMES:
-        _v = _rg_secret(_n)
-        if _v and _v not in [x[1] for x in _GKEYS]: _GKEYS.append((_n, _v))
-    if not _GKEYS:
-        raise RuntimeError('کلید Gemini وارد نشده است؛ GOOGLE_API_KEY (و در صورت وجود GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3) را در GitHub Secrets بگذارید.')
-    _run_no = os.environ.get('GITHUB_RUN_NUMBER', '')
-    _rotation_seed = int(_run_no) if str(_run_no).isdigit() else int(time.time() // 3600)
-    _GK = {'i': _rotation_seed % len(_GKEYS), 'streak': 0, 'exhausted': False, 'notified': False, 'lock': _th.RLock()}
-
-    class _NoModel(RuntimeError): pass                   # با این کلید هیچ مدل قابل‌استفاده‌ای نبود (سهمیه صفر/پر)
-
-    def _gk_name(): return _GKEYS[_GK['i']][0]
-
-    def _gk_apply():                                      # کلید فعلی را در محیط (و در نشست HTTP اگر هنوز زنده است) می‌نشاند
-        k = _GKEYS[_GK['i']][1]; os.environ['GOOGLE_API_KEY'] = k
-        try:
-            if '_S' in globals() and 'x-goog-api-key' in _S.headers: _S.headers['x-goog-api-key'] = k
-        except Exception: pass
-
-    def _gk_alert(reason):                                # همهٔ کلیدها پشت‌سرهم شکست خوردند ← یک اعلان فوری (فقط یک‌بار در هر اجرا)
-        if _GK['notified']: return
-        _GK['notified'] = True
-        title = '⛔ کلیدهای Gemini تمام شد'
-        body = (f"هر {len(_GKEYS)} کلید ({' ، '.join(n for n, _ in _GKEYS)}) پشت‌سرهم خطا دادند و تحلیل متوقف شد.\nآخرین خطا: {_scrub(reason)}\n"
-                "سهمیه پر شده یا کلید نامعتبر است؛ کلید جدید را در GitHub Secrets اضافه کنید (Settings ← Secrets and variables ← Actions).")
-        print('⛔ ' + body)
-        try:
-            tp = _rg_secret('NTFY_TOPIC')
-            if tp and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', tp):
-                requests.post('https://ntfy.sh/', json={'topic': tp, 'title': title, 'message': body[:1800], 'priority': 5, 'tags': ['rotating_light', 'key']}, timeout=10)
-            else: print('⚠ NTFY_TOPIC تنظیم نیست؛ اعلان گوشی نرفت.')
-        except Exception as e: print(f'⚠ اعلان کلید ارسال نشد ({type(e).__name__})')
-
-    def _gk_rotate(reason='', used=None):
-        """کلید فعلی خطای سهمیه/دسترسی داد ← کلید بعدی (۱→۲→۳→۱). True = کلید دیگری فعال شد (تماس را دوباره بزن)؛ False = چرخشی ممکن نیست یا همه پشت‌سرهم شکست خوردند."""
-        with _GK['lock']:
-            if len(_GKEYS) < 2 or _GK['exhausted']: return False
-            if used is not None and used != _GK['i']: return True          # نخ دیگری همین حالا چرخانده؛ دوباره با کلید تازه امتحان کن
-            _GK['streak'] += 1; old = _gk_name()
-            if _GK['streak'] >= len(_GKEYS):
-                _GK['exhausted'] = True; _gk_alert(f'{old}: {reason}'); return False
-            _GK['i'] = (_GK['i'] + 1) % len(_GKEYS); _gk_apply()
-            print(f"🔁 {old} جواب نداد ({_scrub(reason)[:90]}) ← رفتم سراغ {_gk_name()}")
-            return True
-
-    def _gk_ok():                                         # یک تماس موفق = زنجیرهٔ شکست‌ها صفر می‌شود
-        _GK['streak'] = 0; _GK['exhausted'] = False
-
-    def _gk_is_key_error(e):
-        """فقط خطاهای «کلید/سهمیه» باعث چرخش می‌شوند: 429، 401، 403 و 400 با پیام کلید نامعتبر. (خطای 5xx، Timeout و درخواست بد چرخش نمی‌دهند.)"""
-        code = next((getattr(e, a) for a in ('code', 'status_code') if isinstance(getattr(e, a, None), int)), None)
-        low = (type(e).__name__ + ' ' + str(e)).lower()
-        if code is None:
-            m = re.search(r'\b(400|401|403|429)\b', low[:400]); code = int(m.group(1)) if m else None
-        if code in (401, 403, 429): return True
-        if code == 400: return ('api key' in low or 'api_key' in low) and any(w in low for w in ('invalid', 'not valid', 'expired'))
-        return any(w in low for w in ('resource_exhausted', 'resourceexhausted', 'permission_denied', 'permissiondenied', 'unauthenticated', 'api_key_invalid', 'quota exceeded'))
-
-    # ── v28: تماس مدلیِ مقاوم در برابر 503/overload: مدل شلوغ ← صبر + مدل جایگزین + کلید بعدی (قبلاً فقط همان مدل تکرار می‌شد و تیم کامل می‌افتاد) ──
-    _MODEL_BAD = {}                                      # مدل ← تا چه زمانی (epoch) «شلوغ» حساب می‌شود
-    _MODEL_COOL = float(os.environ.get('TA_MODEL_COOL_SEC', '150') or 150)
-    _LLM_BUDGET = float(os.environ.get('TA_LLM_BUDGET_SEC', '180') or 180)      # سقف کل تلاش‌های یک تماس مدلی (ثانیه)
-    _TR_RX = re.compile(r'\b(500|502|503|504)\b')
-
-    def _err_code(e):
-        return next((getattr(e, a) for a in ('code', 'status_code') if isinstance(getattr(e, a, None), int)), None)
-
-    def _is_transient(e):
-        """503 high demand / UNAVAILABLE / 500 / 504 / Timeout / قطع اتصال = موقتی؛ ارزش صبر کردن و مدل دیگر را دارد."""
-        code = _err_code(e); low = (type(e).__name__ + ' ' + str(e)).lower()
-        if code in (500, 502, 503, 504): return True
-        if code in (400, 401, 403, 404): return False
-        if _TR_RX.search(low[:500]): return True
-        return any(w in low for w in ('unavailable', 'overloaded', 'high demand', 'deadline', 'timed out', 'timeout', 'temporarily', 'try again', 'connection', 'internal', 'bad gateway', 'remote end closed', 'reset by peer', 'servererror'))
-
-    def _is_429(e):
-        low = (type(e).__name__ + ' ' + str(e)).lower()
-        return _err_code(e) == 429 or 'resource_exhausted' in low or 'resourceexhausted' in low or bool(re.search(r'\b429\b', low[:400]))
-
-    def _mark_bad(m): _MODEL_BAD[m] = time.time() + _MODEL_COOL
-
-    def _model_chain(first=None):
-        """مدل درخواستی اول، بعد جایگزین‌ها (زنجیرهٔ ساخته‌شده هنگام انتخاب مدل)؛ مدل‌های «شلوغ» به انتها می‌روند."""
-        ch = [m for m in os.environ.get('TA_MODEL_CHAIN', '').split(',') if m]
-        base = ([first] if first else []) + [m for m in ch if m != first]
-        now_ = time.time(); ok_ = [m for m in base if _MODEL_BAD.get(m, 0) <= now_]
-        return ok_ + [m for m in base if m not in ok_]
-
-    def _gem_once(prompt, m):
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        for kw in ({'thinking_level': 'medium'}, {}):      # اگر نسخهٔ کتابخانه این پارامتر را نشناخت، بدونش تلاش می‌کند
-            try: return ChatGoogleGenerativeAI(model=m, timeout=LLM_CALL_TIMEOUT, max_retries=1, **kw).invoke(prompt).content
-            except Exception as e:
-                if not kw or not any(w in str(e).lower() for w in ('thinking', 'unexpected', 'extra', 'validation', 'unsupported')): raise
-
-    def _gem_resilient(prompt, model):
-        """هر مدل دو تلاش (با صبر)؛ بعد مدل بعدیِ زنجیره. خطای کلید/سهمیه ← کلید بعدی. بودجهٔ زمانی تمام شد ← آخرین خطا."""
-        t_end = time.time() + _LLM_BUDGET; last = None; n_try = 0
-        for m in _model_chain(model):
-            for att in range(2):
-                if last is not None and time.time() > t_end: raise last
-                n_try += 1; used = _GK['i']
-                try:
-                    c = _gem_once(prompt, m); _MODEL_BAD.pop(m, None); _gk_ok(); return c
-                except Exception as e:
-                    last = e
-                    if _gk_is_key_error(e) and _gk_rotate(f'{type(e).__name__}: {e}', used): continue
-                    if _is_transient(e) or _is_429(e):
-                        print(f"⚠ مدل {m} شلوغ/ناپایدار ({_scrub(str(e))[:90]}) ← " + ('صبر و تلاش دوباره' if att == 0 else 'مدل بعدی'))
-                        if att == 0: time.sleep(5 + 3 * n_try); continue
-                        break
-                    if _err_code(e) == 404 or 'not found' in str(e).lower()[:200]: break      # این مدل در دسترس نیست ← بعدی
-                    raise
-            _mark_bad(m)
-        raise last if last is not None else RuntimeError('هیچ مدلی در زنجیره نبود')
-
-    def _gk_install_hooks():
-        """تماس‌های TradingAgents/LangChain وسط کار هم کلید را عوض می‌کنند: (الف) هدر کلید در هر درخواست httpx به Google با کلیدِ فعلی جایگزین می‌شود؛ (ب) متد _generate مدل با چرخش + تلاش دوباره پوشانده می‌شود."""
-        _multi = len(_GKEYS) >= 2
-        try:
-            if not _multi: raise StopIteration      # تعویض کلید در هدر فقط با چند کلید
-            import httpx
-            _all_keys = [x[1] for x in _GKEYS]
-            def _swap(req):
-                try:
-                    if req.url.host != 'generativelanguage.googleapis.com': return
-                    cur = _GKEYS[_GK['i']][1]
-                    if 'x-goog-api-key' in req.headers: req.headers['x-goog-api-key'] = cur
-                    elif req.url.params.get('key') in _all_keys: req.url = req.url.copy_with(params=req.url.params.set('key', cur))
-                except Exception: pass
-            if not getattr(httpx.Client.send, '_gk', False):
-                _os = httpx.Client.send
-                def _send(self, request, *a, **k): _swap(request); return _os(self, request, *a, **k)
-                _send._gk = True; httpx.Client.send = _send
-                _oas = httpx.AsyncClient.send
-                async def _asend(self, request, *a, **k): _swap(request); return await _oas(self, request, *a, **k)
-                _asend._gk = True; httpx.AsyncClient.send = _asend
-        except StopIteration: pass
-        except Exception as e: print(f'ℹ هوک httpx برای چرخش کلید نصب نشد ({type(e).__name__}); فقط چرخش در سطح مدل فعال است.')
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI as _C
-        except Exception as e:
-            print(f'ℹ چرخش کلید وسط تحلیل فعال نشد (langchain_google_genai در دسترس نیست: {type(e).__name__}).'); return
-        if getattr(_C, '_gk_patched', False): return
-        _og, _oag = _C._generate, getattr(_C, '_agenerate', None)
-
-        def _bound(self):                                 # این نمونه با کدام کلید ساخته شده؟ (برای نسخه‌هایی که کلید را درون کلاینت نگه می‌دارند)
-            try:
-                v = self.google_api_key.get_secret_value()
-                return next((i for i, x in enumerate(_GKEYS) if x[1] == v), None)
-            except Exception: return None
-
-        def _rebind(self):
-            try:
-                from pydantic import SecretStr
-                self.google_api_key = SecretStr(_GKEYS[_GK['i']][1])
-                f = getattr(self, 'validate_environment', None)
-                if callable(f): f()
-            except Exception: pass
-
-        def _mname(self): return re.sub(r'^models/', '', str(getattr(self, 'model', '') or ''))
-
-        def _swap_model(self):
-            """مدل این نمونه شلوغ است ← همین نمونه به مدل جایگزینِ سالم می‌رود (اگر زنجیره‌ای هست)."""
-            try:
-                cur = _mname(self); nxt = next((m for m in _model_chain(None) if m != cur and _MODEL_BAD.get(m, 0) <= time.time()), None)
-                if not nxt or not cur: return False
-                _mark_bad(cur); pre = 'models/' if str(self.model).startswith('models/') else ''
-                try: self.model = pre + nxt
-                except Exception: object.__setattr__(self, 'model', pre + nxt)
-                print(f'🔀 مدل {cur} شلوغ است ← این عامل به {nxt} رفت')
-                return True
-            except Exception: return False
-
-        def _pre(self):
-            try:
-                if _MODEL_BAD.get(_mname(self), 0) > time.time(): _swap_model(self)
-            except Exception: pass
-
-        def _gen(self, *a, **k):
-            t_end = time.time() + _LLM_BUDGET; n_tr = 0
-            while True:
-                used = _GK['i']
-                if _bound(self) not in (None, used): _rebind(self)
-                _pre(self)
-                try:
-                    r = _og(self, *a, **k); _gk_ok(); _MODEL_BAD.pop(_mname(self), None); return r
-                except Exception as e:
-                    if _gk_is_key_error(e) and _gk_rotate(f'{type(e).__name__}: {e}', used): continue
-                    if (_is_transient(e) or _is_429(e)) and time.time() < t_end:      # 503 «high demand» و مشابه: صبر، هر دوبار یک‌بار مدل عوض کن
-                        n_tr += 1
-                        if n_tr % 2 == 0 and _swap_model(self): continue
-                        print(f'⚠ تماس مدل ناپایدار ({_scrub(str(e))[:80]}) ← {min(30, 5 * n_tr)} ثانیه صبر'); time.sleep(min(30, 5 * n_tr)); continue
-                    raise
-        _C._generate = _gen
-        if _oag is not None:
-            async def _agen(self, *a, **k):
-                import asyncio as _aio
-                t_end = time.time() + _LLM_BUDGET; n_tr = 0
-                while True:
-                    used = _GK['i']
-                    if _bound(self) not in (None, used): _rebind(self)
-                    _pre(self)
-                    try:
-                        r = await _oag(self, *a, **k); _gk_ok(); _MODEL_BAD.pop(_mname(self), None); return r
-                    except Exception as e:
-                        if _gk_is_key_error(e) and _gk_rotate(f'{type(e).__name__}: {e}', used): continue
-                        if (_is_transient(e) or _is_429(e)) and time.time() < t_end:
-                            n_tr += 1
-                            if n_tr % 2 == 0 and _swap_model(self): continue
-                            await _aio.sleep(min(30, 5 * n_tr)); continue
-                        raise
-            _C._agenerate = _agen
-        _C._gk_patched = True
-
-    os.environ['GOOGLE_API_KEY'] = _GKEYS[_GK['i']][1]      # هر اجرای GitHub: GITHUB_RUN_NUMBER برای انتخاب کلید بعدی؛ خطای quota نیز باعث چرخش فوری می‌شود
-    print(f"🔄 کلید پشتیبان این اجرا: {_GKEYS[_GK['i']][0]} (از {len(_GKEYS)} کلید؛ چرخش برای توزیع/پایداری است، نه افزایش سهمیهٔ یک پروژه)")
-    print(f"🔑 {len(_GKEYS)} کلید Gemini آماده است ({' ، '.join(n for n, _ in _GKEYS)})" + ("؛ با خطای سهمیه/دسترسی به‌ترتیب و چرخشی عوض می‌شوند." if len(_GKEYS) > 1 else "؛ برای چرخش GOOGLE_API_KEY_2 و GOOGLE_API_KEY_3 را هم در Secrets و workflow بگذارید."))
-    os.environ['TRADINGAGENTS_LLM_PROVIDER'] = 'google'
-    os.environ['TRADINGAGENTS_MAX_DEBATE_ROUNDS'] = '2'
-    os.environ['TRADINGAGENTS_MAX_RISK_ROUNDS'] = '1'
-    os.environ['TRADINGAGENTS_LLM_MAX_RETRIES'] = '3' if len(_GKEYS) > 1 else '5'      # با چند کلید، بعد از ۳ تلاش ناموفق همان کلید، چرخش انجام می‌شود (به‌جای ۵ تلاش)
-
-    _S = requests.Session()
-    _S.headers.update({'x-goog-api-key': os.environ['GOOGLE_API_KEY'], 'Content-Type': 'application/json'})   # کلید فقط در هدر است، نه در آدرس
-    _n_req = [0]
-
-    class _ApiError(Exception):
-        def __init__(self, code, text): super().__init__(f"HTTP {code}"); self.code, self.text = code, text
-
-    def _scrub(t):
-        t = str(t)
-        for k in [os.environ.get('GOOGLE_API_KEY', '')] + [x[1] for x in _GKEYS]:
-            if k: t = t.replace(k, '***')
-        return t[:240]
-
-    _gk_install_hooks()
-
-    # ── ۲) فهرست واقعی مدل‌های همین کلید (یک درخواست GET؛ فقط در خطای شبکه/سرور یک بار دیگر) ──
-    def _list_models():
-        out, token = [], None
-        for _ in range(4):
-            params = {'pageSize': 1000}
-            if token: params['pageToken'] = token
-            r = None
-            for attempt in (1, 2):
-                _n_req[0] += 1
-                try:
-                    r = _S.get(f"{_BASE}/models", params=params, timeout=(6, 15))
-                except requests.RequestException:
-                    if attempt == 2: raise
-                    time.sleep(2); continue
-                if r.status_code >= 500 and attempt == 1: time.sleep(2); continue
-                break
-            if r.status_code != 200: raise _ApiError(r.status_code, _scrub(r.text))
-            j = r.json(); out += j.get('models', []); token = j.get('nextPageToken')
-            if not token: break
-        return out
-
-    # ── ۳) نامزدها: فقط مدل‌های Gemini ≥ ۲٫۵ (دارای Thinking) که generateContent را پشتیبانی می‌کنند؛ مدل‌های تصویر/صوت/امبدینگ/آزمایشی حذف می‌شوند ──
-    _RX = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(pro|flash-lite|flash)(-.*)?$")
-    _SKIP = ('embedding', 'aqa', 'imagen', 'veo', 'tts', 'audio', 'live', 'image', 'robotics', 'computer', 'native', 'learnlm', 'vision', 'custom', '-exp')
-    _TIER = {'pro': 3, 'flash': 2, 'flash-lite': 1}
-
-    def _candidates(models):
-        res = []
-        for m in models:
-            name = str(m.get('name', '')).split('/')[-1]; mt = _RX.match(name)
-            if not mt or any(s in name for s in _SKIP): continue
-            if 'generateContent' not in (m.get('supportedGenerationMethods') or []): continue
-            if float(m.get('inputTokenLimit') or 10 ** 9) < 100_000: continue       # گزارش‌های تیم بلندند
-            ver = float(mt.group(1))
-            if ver < 2.5: continue
-            res.append({'name': name, 'ver': ver, 'tier': mt.group(2), 'preview': 'preview' in name})
-        res.sort(key=lambda c: c['name'], reverse=True)                              # بین اسنپ‌شات‌های هم‌ردیف، جدیدترین اول
-        return res
-
-    def _rank(c, tiers):                                                              # بالاتر = جلوتر؛ نسخهٔ پایدار روی Preview هم‌نسخه مقدم است
-        return (tiers.index(c['tier']) if c['tier'] in tiers else 99, -c['ver'], c['preview'])
-
-    # ── ۴) Thinking: همان نگاشتی که کلاینت TradingAgents اعمال می‌کند (نسل ۳ ← thinking_level، نسل ۲٫۵ ← thinking_budget) ──
-    def _think_cfg(c, lvl):
-        if c['ver'] >= 3:
-            return {'thinkingLevel': 'low' if (c['tier'] == 'pro' and lvl == 'minimal') else lvl}
-        return {'thinkingBudget': -1 if lvl == 'high' else 0}                          # -1 = پویا (بالاترین)؛ ۲٫۵ Pro خاموش‌شدن Thinking را نمی‌پذیرد
-
-    def _ladder(c):                                                                    # سطح‌های مجازِ مدل از بالا به پایین، تا سقف THINK_TARGET
-        base = (['high', 'low'] if c['tier'] == 'pro' else ['high', 'medium', 'low', 'minimal']) if c['ver'] >= 3 else (['high'] if c['tier'] == 'pro' else ['high', 'low'])
-        cap = _LEVELS.index(THINK_TARGET) if THINK_TARGET in _LEVELS else 3
-        return [l for l in base if _LEVELS.index(l) <= cap] or base[:1]
-
-    # ── ۵) آزمایش کم‌هزینه: برای هر مدل یک درخواست کوچک (حداکثر ۶۴ توکن)؛ فقط اگر خودِ Thinking رد شد، یک بار با سطح پایین‌تر ──
-    _FA = {'OK': '✅ پاسخ داد', 'THROTTLED': '⏳ محدودیت لحظه‌ای ۴۲۹', 'QUOTA_DAY': '⛔ سهمیهٔ روزانه پر است', 'NO_QUOTA': '⛔ سهمیهٔ این مدل برای کلید شما صفر است',
-           'NOT_FOUND': '✖ مدل پیدا نشد (404)', 'FORBIDDEN': '⛔ دسترسی/منطقه (403)', 'THINK_REJECT': '↘ سطح Thinking رد شد', 'BAD_REQUEST': '✖ درخواست نامعتبر (400)',
-           'SERVER': '⚠ خطای سرور (5xx)', 'TIMEOUT': '⚠ Timeout', 'NETWORK': '⚠ خطای شبکه', 'AUTH': '❌ کلید نامعتبر/منقضی'}
-    _probe, _log = {}, []
-
-    def _classify(r):
-        sc, low = r.status_code, (r.text or '').lower()
-        if sc == 200: return 'OK'
-        if sc == 429:                                    # «limit: 0» = بسته‌بودن مدل برای این کلید؛ بقیهٔ ۴۲۹ها محدودیت موقت‌اند، نه مدرکِ دسترسی کامل
-            return 'NO_QUOTA' if re.search(r'limit: 0\b', low) else 'QUOTA_DAY' if 'perday' in low else 'THROTTLED'
-        if sc == 400: return 'THINK_REJECT' if 'thinking' in low else 'AUTH' if (('api key' in low or 'api_key' in low) and any(w in low for w in ('invalid', 'not valid', 'expired'))) else 'BAD_REQUEST'
-        if sc == 401: return 'AUTH'
-        if sc == 403: return 'FORBIDDEN'
-        if sc == 404: return 'NOT_FOUND'
-        return 'SERVER' if sc >= 500 else 'BAD_REQUEST'
-
-    def _try(c, lvl):
-        k = (c['name'], lvl)
-        if k in _probe: return _probe[k]
-        body = {'contents': [{'parts': [{'text': 'Reply with: ok'}]}], 'generationConfig': {'maxOutputTokens': 64, 'thinkingConfig': _think_cfg(c, lvl)}}
-        _n_req[0] += 1
-        try: st = _classify(_S.post(f"{_BASE}/models/{c['name']}:generateContent", json=body, timeout=(6, 25)))
-        except requests.Timeout: st = 'TIMEOUT'
-        except requests.RequestException: st = 'NETWORK'
-        _probe[k] = st; _log.append((c['name'] + (f' [{_gk_name()}]' if len(_GKEYS) > 1 else ''), lvl, st))
-        if st == 'AUTH': raise _ApiError(401, 'API key rejected')
-        return st
-
-    def _shortlist(cands):                                # از هر رده: بهترین‌ها + (اگر همه Preview بودند) بهترین مدل پایدار، چون Previewها اغلب سهمیهٔ صفر دارند
-        keep, tiers = set(), {}
-        for c in cands: tiers.setdefault(c['tier'], []).append(c)
-        for lst in tiers.values():
-            top = lst[:MAX_TESTS_PER_TIER]; keep.update(c['name'] for c in top)
-            if all(c['preview'] for c in top):
-                stable = next((c for c in lst if not c['preview']), None)
-                if stable: keep.add(stable['name'])
-        return [c for c in cands if c['name'] in keep]
-
-    def _choose(cands, levels_of):
-        soft = None
-        for c in _shortlist(cands):
-            for lvl in levels_of(c)[:2]:
-                st = _try(c, lvl)
-                if st == 'OK': return c, lvl, st
-                if st == 'THROTTLED' and soft is None: soft = (c, lvl, st)
-                if st != 'THINK_REJECT': break
-        return soft or (None, None, None)                # اگر هیچ مدلی OK نبود، بهترین مدلِ «محدودیت لحظه‌ای» (نه «بدون دسترسی»)
-
-    # ── ۶) اجرا: فهرست ← DEEP ← QUICK ──
-    for _kt in range(len(_GKEYS)):                      # هر دور = یک کلید؛ اگر کلید نشد، کلید بعدی (چرخشی)
-        _used = _GK['i']; _probe.clear(); _S.headers['x-goog-api-key'] = os.environ['GOOGLE_API_KEY']
-        try:
-            _all = _list_models()
-            _cands = _candidates(_all)
-            if not _cands: raise RuntimeError('هیچ مدل Gemini ≥ ۲٫۵ با پشتیبانی generateContent در این حساب پیدا نشد')
-            _byname = {c['name']: c for c in _cands}
-
-            _dc = sorted(_cands, key=lambda c: _rank(c, ['pro', 'flash', 'flash-lite']))                   # DEEP: قوی‌ترین رده (Pro) و جدیدترین نسل
-            if FORCE_DEEP:
-                if FORCE_DEEP in _byname: _dc = [_byname[FORCE_DEEP]]
-                else: _msg('#d99a00', f'⚠ FORCE_DEEP «{FORCE_DEEP}» در فهرست واقعی API نیست؛ نادیده گرفته شد.')
-            D, lvl, d_st = _choose(_dc, _ladder)
-            if not D: raise _NoModel('هیچ مدل Deep قابل‌استفاده‌ای پیدا نشد (جزئیات در فهرست آزمایش‌ها)')
-
-            _qt = ['flash', 'flash-lite'] if D['tier'] == 'pro' else ['flash-lite', 'flash']               # QUICK: سریع‌تر و سبک‌تر از DEEP
-            _qc = sorted([c for c in _cands if c['name'] != D['name']], key=lambda c: _rank(c, _qt))
-            _qc = [c for c in _qc if c['tier'] in _qt]
-            if FORCE_QUICK:
-                if FORCE_QUICK in _byname: _qc = [_byname[FORCE_QUICK]]
-                else: _msg('#d99a00', f'⚠ FORCE_QUICK «{FORCE_QUICK}» در فهرست واقعی API نیست؛ نادیده گرفته شد.')
-            Q, _, q_st = _choose(_qc, lambda c: [lvl])                                                      # QUICK با همان سطح Thinking (متغیر محیطی یکی است)
-            if not Q: Q, q_st = D, d_st
-            break
-        except _ApiError as e:
-            if e.code in (400, 401, 403, 429) and _gk_rotate(f'HTTP {e.code}', _used): continue          # این کلید نشد ← کلید بعدی
-            if e.code in (400, 401, 403): _msg('#e5484d', f'❌ کلید پذیرفته نشد یا دسترسی ندارد ({e}). کلید را در aistudio.google.com بررسی کنید. {e.text[:160]}')
-            else: _msg('#e5484d', f'❌ پاسخ غیرمنتظرهٔ API ({e}): {e.text[:160]}')
-            raise RuntimeError('Gemini key/model check failed') from None
-        except RuntimeError as e:
-            if isinstance(e, _NoModel) and _gk_rotate(str(e), _used): continue          # این کلید مدل قابل‌استفاده نداشت ← کلید بعدی
-            _msg('#e5484d', f'❌ {e}')
-            raise RuntimeError(str(e)) from None
-        except Exception as e:
-            _msg('#e5484d', f'❌ چک کلید/مدل انجام نشد ({type(e).__name__})؛ اتصال را بررسی و سلول را دوباره اجرا کنید')
-            raise RuntimeError('Gemini connection/model check failed') from None
-        finally:
-            _S.headers.pop('x-goog-api-key', None)           # کلید از نشست HTTP پاک می‌شود؛ فقط متغیر محیطیِ موردنیاز TradingAgents می‌ماند
-
-    _gk_ok()                                              # انتخاب مدل با یکی از کلیدها موفق بود
-    DEEP, QUICK, _lvl = D['name'], Q['name'], lvl
-    os.environ['TRADINGAGENTS_DEEP_THINK_LLM'] = DEEP
-    os.environ['TRADINGAGENTS_QUICK_THINK_LLM'] = QUICK
-    os.environ['TRADINGAGENTS_GOOGLE_THINKING_LEVEL'] = _lvl
-    try:      # v28: زنجیرهٔ جایگزین برای وقتی مدل انتخاب‌شده 503/شلوغ است (هم‌نسلِ DEEP اول؛ پایدار قبل از Preview؛ مدل‌های بدون سهمیه/دسترسی حذف)
-        _badn = {n_ for (n_, _l), s_ in _probe.items() if s_ in ('NO_QUOTA', 'NOT_FOUND', 'FORBIDDEN', 'QUOTA_DAY', 'AUTH')}
-        _fam = D['ver'] >= 3
-        _alt = sorted([c for c in _cands if c['name'] not in (DEEP, QUICK) and c['name'] not in _badn],
-                      key=lambda c: ((c['ver'] >= 3) != _fam, c['preview'], {'flash': 0, 'flash-lite': 1, 'pro': 2}.get(c['tier'], 3), -c['ver']))
-        _ch = []
-        for _m in [DEEP, QUICK] + [c['name'] for c in _alt][:5]:
-            if _m not in _ch: _ch.append(_m)
-        os.environ['TA_MODEL_CHAIN'] = ','.join(_ch)
-        print('🛟 زنجیرهٔ مدل‌های جایگزین (برای 503/شلوغی): ' + ' ← '.join(_ch))
-    except Exception as _ce: print(f'ℹ زنجیرهٔ مدل جایگزین ساخته نشد ({type(_ce).__name__})')
-
-    # ── ۷) گزارش شفاف ──
-    _rows = ''.join(f"<tr><td style='padding:3px 10px'>{_hl.escape(n)}</td><td style='padding:3px 10px'>{_hl.escape(l)}</td><td style='padding:3px 10px'>{_hl.escape(_FA.get(s, s))}</td></tr>" for n, l, s in _log)
-    display(HTML("<div dir='rtl' style='font-family:Vazirmatn,Tahoma,sans-serif;margin:6px 0'>"
-                 f"<table style='border-collapse:collapse;direction:ltr;text-align:left'><tr><td style='padding:3px 10px'><b>DEEP</b> (مدیران)</td><td><b>{_hl.escape(DEEP)}</b></td></tr>"
-                 f"<tr><td style='padding:3px 10px'><b>QUICK</b> (بقیهٔ عامل‌ها)</td><td><b>{_hl.escape(QUICK)}</b></td></tr>"
-                 f"<tr><td style='padding:3px 10px'><b>Thinking</b></td><td><b>{_hl.escape(_lvl)}</b></td></tr></table>"
-                 f"<details style='margin-top:6px'><summary>🔬 آزمایش‌ها ({_n_req[0]} درخواست شامل فهرست مدل‌ها)</summary><table style='direction:ltr;text-align:left;font-size:12.5px'>{_rows}</table></details></div>"))
-    _soft = [n for n, s in ((DEEP, d_st), (QUICK, q_st)) if s == 'THROTTLED']
-    if _soft: _msg('#d99a00', f"⚠ مدل‌های {', '.join(_soft)} فقط به‌خاطر محدودیت لحظه‌ایِ ۴۲۹ انتخاب شدند (مدل دیگری جواب سالم نداد). چند دقیقه صبر کنید و سلول را دوباره اجرا کنید؛ سلول ۲ بدون آن هم تلاش مجدد خودکار دارد.")
-    try:                                                  # فقط اطلاعاتی: آیا کلاینت Google پروژه Thinking را می‌شناسد؟
-        _gc = open('tradingagents/llm_clients/google_client.py', encoding='utf-8', errors='ignore').read()
-        if 'thinking_level' not in _gc: _msg('#d99a00', 'ℹ کلاینت Google این نسخهٔ TradingAgents ظاهراً thinking_level را نمی‌شناسد؛ سطح Thinking ممکن است اعمال نشود (بی‌ضرر).')
-    except Exception:
-        pass
-    _msg('#30a46c', f"✅ آماده · مدیران: {DEEP} · بقیه: {QUICK} · سطح تفکر: {_lvl}. سلول ۲ را اجرا کنید (۵ تا ۱۰ دقیقه؛ در حالت ALL چند دقیقه بیشتر).")
-
-    # Claude Sonnet برای deep و Haiku برای quick؛ Gemini فقط مسیر پشتیبان است.
-    if LLM_PROVIDER in ("anthropic", "1xai"):
-        _claude_api = _rg_secret("ONE_XAI_API_KEY") if LLM_PROVIDER == "1xai" else _rg_secret("ANTHROPIC_API_KEY")
-        if not _claude_api: raise RuntimeError(("ONE_XAI_API_KEY" if LLM_PROVIDER == "1xai" else "ANTHROPIC_API_KEY") + " در GitHub Secrets تنظیم نشده است؛ موتور Claude اجرا متوقف شد.")
-        _sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5").strip() or "claude-sonnet-5-5"
-        _haiku = os.environ.get("CLAUDE_HAIKU_MODEL", "claude-haiku-5-5").strip() or "claude-haiku-5-5"
-        os.environ["ANTHROPIC_API_KEY"] = _claude_api
-        if LLM_PROVIDER == "1xai":
-            os.environ["ANTHROPIC_BASE_URL"] = os.environ.get("CLAUDE_BASE_URL", "https://1xai.ir/anthropic").rstrip("/")
-        os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "anthropic"
-        os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _sonnet
-        os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _haiku
-        os.environ["TRADINGAGENTS_ANTHROPIC_EFFORT"] = os.environ.get("CLAUDE_SONNET_EFFORT", "medium")
-        print(f"🤖 مدل‌های اصلی: کارهای عمیق/حساس={_sonnet}؛ کارهای سریع و پرتکرار={_haiku}؛ Gemini فقط پشتیبان است.")
-
-    # Grok موتور اصلی برای تیم کامل TradingAgents؛ Gemini مسیر پشتیبان است.
-    if LLM_PROVIDER == "grok":
-        _gk_api = _rg_secret("GROK_API_KEY")
-        if not _gk_api: raise RuntimeError("GROK_API_KEY در GitHub Secrets تنظیم نشده است؛ Grok موتور اصلی است و اجرا متوقف شد.")
-        _grok_base = os.environ.get("GROK_BASE_URL", "https://api.x.ai/v1").strip().rstrip("/")
-        if not _grok_base.startswith("https://"): raise RuntimeError("GROK_BASE_URL باید آدرس HTTPS معتبر API باشد.")
-        _grok_model = os.environ.get("GROK_MODEL", "grok-4.7").strip() or "grok-4.7"
-        os.environ["TRADINGAGENTS_LLM_PROVIDER"] = "openai_compatible"
-        os.environ["TRADINGAGENTS_LLM_BACKEND_URL"] = _grok_base
-        os.environ["OPENAI_COMPATIBLE_API_KEY"] = _gk_api
-        os.environ["TRADINGAGENTS_DEEP_THINK_LLM"] = _grok_model
-        os.environ["TRADINGAGENTS_QUICK_THINK_LLM"] = _grok_model
-        os.environ["TA_GROK_MODEL"] = _grok_model
-        print(f"🤖 موتور اصلی: Grok ({_grok_model})؛ Gemini برای fallback آماده است.")
 
 
 # ======================= موتور تحلیل =======================
@@ -4942,6 +4402,339 @@ def all_scan():
 for _k, _v in list(globals().items()):      # v24: تارگت و عمر سفارش در متن پرامپت‌ها هم از تنظیمات فعلی بیاید
     if _k.isupper() and isinstance(_v, str) and ("1.5R" in _v or "30 minutes" in _v or "<<R1>>" in _v or "<<R2>>" in _v):
         globals()[_k] = _v.replace("1.5R", f"{SAFE_R1:g}R").replace("30 minutes", f"{ORDER_TTL * 5} minutes").replace("<<R1>>", f"{SAFE_R1:g}").replace("<<R2>>", f"{SAFE_R2:g}")
+
+# ═══════════════ v37 · روتر چندمدلی 1xAI: ۲۵ عامل × ۴ حالت (Normal/VIP/Gold/Eco) · همه فقط با ONE_XAI_API_KEY ═══════════════
+# منبع حقیقت: جدول ۲۵ عامل (اسکرین‌شات‌ها). هر تماس مدلی در موتور از همین‌جا به مدل نقش خودش می‌رسد:
+#   Claude → /anthropic/v1/messages (همان _claude_chat)،  GPT-6.x → /v1/responses،  Gemini / Grok / DeepSeek / GLM / Qwen / MiniMax → /v1/chat/completions
+# نقش از این‌ها تشخیص داده می‌شود (به ترتیب): model="role:s05" ← TA_CURRENT_LLM_ROLE ← امضای متن پرامپت ← نام مدل صریح غیر Claude ← تابع صدازننده ← پیش‌فرض قدیمی.
+# اگر مدلی در فهرست /v1/models کلید نبود یا خطای مدل داد، خودکار به «جایگزین» همان مدل می‌رود (زنجیره همیشه به Claude ختم می‌شود).
+import threading as _rt_thr, sys as _rt_sys
+_RT = {"lock": _rt_thr.Lock(), "calls": {}, "dead": {}, "t0": time.time(), "ids": {}}
+_RT_TOMAN_USD = float(os.environ.get("TA_TOMAN_PER_USD", "293700") or 293700)
+
+def _rt_norm(s): return re.sub(r"[^0-9a-z؀-ۿ]+", "", str(s or "").lower())
+
+# friendly → (vendor, متغیر env برای شناسهٔ واقعی, شناسه‌های محتمل, توکن‌های لازم برای تطبیق فازی, توکن‌های ممنوع, جایگزین‌ها, قیمت تقریبی USD/1M ورودی/خروجی از CSV مصرف)
+_CAT = {
+    "Mythos":            dict(v="anthropic", env="CLAUDE_MYTHOS_MODEL", ids=["claude-mythos-5-2"], tok=("mythos",), fb=["Fable", "Opus 5.5", "Sonnet 5.5"], p=(16, 80)),
+    "Fable":             dict(v="anthropic", env="CLAUDE_FABLE_MODEL", ids=["claude-fable-5-2"], tok=("fable",), fb=["Opus 5.5", "Sonnet 5.5"], p=(8, 40)),
+    "Opus 5.5":          dict(v="anthropic", env="CLAUDE_OPUS_MODEL", ids=["claude-opus-5-5"], tok=("opus", "55"), fb=["Sonnet 5.5", "Haiku 5.5"], p=(4, 20)),
+    "Sonnet 5.5":        dict(v="anthropic", env="CLAUDE_SONNET_MODEL", ids=["claude-sonnet-5-5"], tok=("sonnet", "55"), fb=["Haiku 5.5", "Gemini 3.8 Flash"], p=(2, 10)),
+    "Haiku 5.5":         dict(v="anthropic", env="CLAUDE_HAIKU_MODEL", ids=["claude-haiku-5-5"], tok=("haiku", "55"), fb=["Gemini 3.8 Flash", "DeepSeek V4 Flash"], p=(0.4, 2)),
+    "GPT-6.2 Sol":       dict(v="openai", ids=["gpt-6.2-sol"], tok=("gpt", "62", "sol"), fb=["Sonnet 5.5", "Gemini 4 Argon"], p=(2, 10)),
+    "Gemini 4 Argon":    dict(v="gemini", ids=["gemini-4-argon"], tok=("gemini", "4", "argon"), fb=["Gemini 3.8 Flash", "Haiku 5.5"], p=(2, 10)),
+    "Gemini 3.8 Flash":  dict(v="gemini", ids=["gemini-3.8-flash"], tok=("gemini", "38", "flash"), no=("lite",), fb=["Haiku 5.5", "DeepSeek V4 Flash"], p=(0.3, 2.5)),
+    "Grok 4.7":          dict(v="xai", ids=["grok-4.7"], tok=("grok", "47"), no=("fast", "mini"), fb=["Sonnet 5.5", "Haiku 5.5"], p=(2.2, 6.5)),
+    "DeepSeek V4 Pro":   dict(v="deepseek", ids=["deepseek-v4-pro"], tok=("deepseek", "v4", "pro"), fb=["DeepSeek V4 Flash", "Haiku 5.5"], p=(0.6, 2.5)),
+    "DeepSeek V4 Flash": dict(v="deepseek", ids=["deepseek-v4-flash"], tok=("deepseek", "v4", "flash"), fb=["Gemini 3.8 Flash", "Haiku 5.5"], p=(0.15, 0.6)),
+    "GLM 5.3":           dict(v="zhipu", ids=["glm-5.3"], tok=("glm", "53"), no=("flash", "air", "vision"), fb=["GLM 5.3 Flash", "DeepSeek V4 Flash", "Haiku 5.5"], p=(0.6, 2.2)),
+    "GLM 5.3 Flash":     dict(v="zhipu", ids=["glm-5.3-flash"], tok=("glm", "53", "flash"), fb=["DeepSeek V4 Flash", "Haiku 5.5"], p=(0.1, 0.4)),
+    "Qwen 3.8 Plus":     dict(v="qwen", ids=["qwen-3.8-plus", "qwen3.8-plus"], tok=("qwen", "38", "plus"), fb=["Qwen 3.8 Flash", "DeepSeek V4 Pro", "Haiku 5.5"], p=(0.4, 1.2)),
+    "Qwen 3.8 Flash":    dict(v="qwen", ids=["qwen-3.8-flash", "qwen3.8-flash"], tok=("qwen", "38", "flash"), fb=["DeepSeek V4 Flash", "Haiku 5.5"], p=(0.1, 0.4)),
+    "MiniMax M3.1":      dict(v="minimax", ids=["minimax-m3.1", "MiniMax-M3.1"], tok=("minimax", "m31"), fb=["DeepSeek V4 Flash", "Haiku 5.5"], p=(0.3, 1.2)),
+}
+_RT_NAMES = {_rt_norm(k): k for k in _CAT}
+
+# جدول ۲۵ عامل: (slot، نام، Normal، VIP، Gold). لیست دوتایی یعنی [تصمیم‌گیر، نظر دوم مستقل]. ستون Eco از Normal با یک پله ارزان‌تر ساخته می‌شود.
+_ROWS = [
+    ("s01", "مدیرعامل", ["Opus 5.5", "GPT-6.2 Sol"], ["Mythos", "Fable"], ["Mythos", "Fable"]),
+    ("s02", "Al Brooks", "Sonnet 5.5", "Sonnet 5.5", "Opus 5.5"),
+    ("s03", "Larry Williams", "Gemini 3.8 Flash", "GPT-6.2 Sol", "Sonnet 5.5"),
+    ("s04", "Jake Bernstein", "Qwen 3.8 Plus", "Gemini 4 Argon", "Sonnet 5.5"),
+    ("s05", "Richard Wyckoff", "DeepSeek V4 Flash", "DeepSeek V4 Pro", "Sonnet 5.5"),
+    ("s06", "Linda Raschke", "GLM 5.3 Flash", "GLM 5.3", "Sonnet 5.5"),
+    ("s07", "پروفسور اقتصاد", "DeepSeek V4 Pro", "GPT-6.2 Sol", "Opus 5.5"),
+    ("s08", "معامله‌گر", "DeepSeek V4 Pro", "Sonnet 5.5", "Sonnet 5.5"),
+    ("s09", "Kovner", "DeepSeek V4 Pro", "Sonnet 5.5", "Sonnet 5.5"),
+    ("s10", "ریسک", "DeepSeek V4 Pro", "Sonnet 5.5", "Sonnet 5.5"),
+    ("s11", "Grok (دیده‌بان X)", "Grok 4.7", "Grok 4.7", "Grok 4.7"),
+    ("s12", "کلون خوش‌بین", "DeepSeek V4 Flash", "Gemini 3.8 Flash", "Haiku 5.5"),
+    ("s13", "کلون بدبین", "MiniMax M3.1", "MiniMax M3.1", "Haiku 5.5"),
+    ("s14", "کلون بازار", "DeepSeek V4 Flash", "Gemini 3.8 Flash", "Haiku 5.5"),
+    ("s15", "کلون خبر", "DeepSeek V4 Flash", "Gemini 3.8 Flash", "Gemini 3.8 Flash"),
+    ("s16", "کلون بنیادی", "GLM 5.3 Flash", "Qwen 3.8 Flash", "Haiku 5.5"),
+    ("s17", "کلون احساسات", "GLM 5.3 Flash", "MiniMax M3.1", "Haiku 5.5"),
+    ("s18", "اعتبارسنج", "GLM 5.3 Flash", "Gemini 3.8 Flash", "Haiku 5.5"),
+    ("s19", "گردآورندهٔ خبر", "Qwen 3.8 Flash", "Haiku 5.5", "Haiku 5.5"),
+    ("s20", "بازبین بک‌تست", "GLM 5.3 Flash", "DeepSeek V4 Flash", "DeepSeek V4 Flash"),
+    ("s21", "اعلان‌ساز", "Qwen 3.8 Flash", "Haiku 5.5", "Haiku 5.5"),
+    ("s22", "ژورنال‌نویس", "GLM 5.3 Flash", "DeepSeek V4 Flash", "Haiku 5.5"),
+    ("s23", "غربالگر تکنیکال (ALL)", "Qwen 3.8 Flash", "Haiku 5.5", "Haiku 5.5"),
+    ("s24", "غربالگر زمینه (ALL)", "GLM 5.3 Flash", "Qwen 3.8 Flash", "Qwen 3.8 Flash"),
+    ("s25", "رتبه‌بند (ALL)", "GLM 5.3 Flash", "DeepSeek V4 Flash", "DeepSeek V4 Flash"),
+]
+_ECO_DOWN = {"Mythos": "Opus 5.5", "Fable": "Opus 5.5", "Opus 5.5": "Sonnet 5.5", "Sonnet 5.5": "Haiku 5.5", "GPT-6.2 Sol": "Haiku 5.5", "Gemini 4 Argon": "Gemini 3.8 Flash",
+             "Qwen 3.8 Plus": "Qwen 3.8 Flash", "DeepSeek V4 Pro": "DeepSeek V4 Flash", "GLM 5.3": "GLM 5.3 Flash"}
+
+def _rt_build():
+    R = {m: {} for m in ("Normal", "VIP", "Gold", "Eco")}
+    for slot, _fa, n, v, g in _ROWS:
+        nl, vl, gl = (x if isinstance(x, list) else [x] for x in (n, v, g))
+        R["Normal"][slot], R["VIP"][slot], R["Gold"][slot] = nl, vl, gl
+        R["Eco"][slot] = ["Sonnet 5.5"] if slot == "s01" else [_ECO_DOWN.get(x, x) for x in nl]      # مدیرعامل Eco: Sonnet 5.5 و بعد Haiku (طبق ta.yml)؛ نظر دوم ندارد
+    try:                      # بازنویسی دلخواه از Variables: {"Gold": {"s05": ["Opus 5.5"]}}
+        ov = json.loads(os.environ.get("TA_ROSTER_JSON", "") or "{}")
+        for m, d in (ov or {}).items():
+            m_ = {"normal": "Normal", "vip": "VIP", "gold": "Gold", "eco": "Eco"}.get(str(m).lower())
+            for s_, lst in (d or {}).items():
+                lst = [lst] if isinstance(lst, str) else list(lst)
+                if m_ and s_ in R[m_] and lst and all(x in _CAT for x in lst): R[m_][s_] = lst
+                else: print(f"⚠ TA_ROSTER_JSON نادیده گرفته شد: {m}/{s_}")
+    except Exception as e: print(f"⚠ TA_ROSTER_JSON خوانده نشد ({type(e).__name__})")
+    return R
+
+AGENT_ROSTER = _rt_build()
+_SLOT_FA = {s: fa for s, fa, *_ in _ROWS}
+_CEO_AFTER_CAP = ["Sonnet 5.5", "Opus 5.5"]        # بعد از سقف تماس مدیرعامل (TA_CEO_MAX_CALLS)
+
+def _rt_mode():
+    return {"normal": "Normal", "vip": "VIP", "gold": "Gold", "eco": "Eco"}.get(str(os.environ.get("TA_MODE", "Normal")).strip().lower(), "Normal")
+
+# نام‌های مستعار برای TA_CURRENT_LLM_ROLE / model="role:..."
+_RT_ALIAS = {"ceo": "s01", "ceo_final": "s01", "al_brooks": "s02", "brooks": "s02", "larry_williams": "s03", "williams": "s03", "jake_bernstein": "s04", "bernstein": "s04",
+          "richard_wyckoff": "s05", "wyckoff": "s05", "linda_raschke": "s06", "raschke": "s06", "prof_economics": "s07", "professor": "s07", "economist": "s07", "econ": "s07",
+          "trader": "s08", "ict_smc": "s08", "smc": "s08", "kovner": "s09", "risk": "s10", "risk_manager": "s10", "overseer": "s10", "grok": "s11", "x_scout": "s11", "grok_x": "s11",
+          "clone_optimist": "s12", "optimist": "s12", "bull": "s12", "clone_pessimist": "s13", "pessimist": "s13", "bear": "s13", "clone_market": "s14", "market": "s14",
+          "clone_news": "s15", "news": "s15", "clone_fundamental": "s16", "fundamental": "s16", "clone_sentiment": "s17", "sentiment": "s17", "social": "s17",
+          "credit": "s18", "credibility": "s18", "validator": "s18", "news_collector": "s19", "collector": "s19", "backtest": "s20", "backtest_reviewer": "s20", "strat_lab": "s20",
+          "announcer": "s21", "notifier": "s21", "journal": "s22", "journal_writer": "s22", "postmortem": "s22", "autopsy": "s22",
+          "tech_screener": "s23", "technical_screener": "s23", "fund_screener": "s24", "context_screener": "s24", "ranker": "s25"}
+for _a1, _a2, *_a3 in _ROWS: _RT_ALIAS[_rt_norm(_a2)] = _a1
+del _a1, _a2, _a3
+_TACT = {"tactical_mythos": "Mythos", "tactical_fable": "Fable", "tactical_gpt": "GPT-6.2 Sol"}
+# امضای متن پرامپت برای تماس‌هایی که نقش صریح ندارند
+_SIG = (("You are the TACTICAL analyst", "s14"), ("FUNDAMENTAL / NEWS / SENTIMENT analyst", "s16"),
+        ("chief economist reviewing a quantitative", "s20"), ("senior technical trader reviewing a strategy backtest", "s20"))
+# تابع صدازننده در موتور → نقش
+_STK = {"ceo_prepare": "s01", "smc_prepare": "s08", "council_prepare": "s02", "econ_prepare": "s07", "desk_overseer": "s10", "strat_lab": "s20",
+        "strat_desk_prepare": "s20", "strat_exam": "s20", "autopsy": "s22", "_postmortem": "s22"}
+
+def _rt_slot_of(role):
+    r = re.sub(r"[^0-9a-z؀-ۿ]+", "_", str(role or "").strip().lower()).strip("_")
+    if not r: return None
+    if r in _RT_ALIAS: return _RT_ALIAS[r]
+    if _rt_norm(r) in _RT_ALIAS: return _RT_ALIAS[_rt_norm(r)]
+    m = re.fullmatch(r"(?:s|slot|agent|a)?_?0*(\d{1,2})", r)
+    if m and 1 <= int(m.group(1)) <= 25: return "s%02d" % int(m.group(1))
+    return None
+
+def _rt_friendly(name):
+    """نام نمایشی/شناسهٔ واقعی (مثل claude-opus-5-5 یا gpt-6.2-sol) → کلید _CAT، یا None."""
+    n = _rt_norm(name)
+    if not n: return None
+    if n in _RT_NAMES: return _RT_NAMES[n]
+    for k, sp in _CAT.items():
+        ids = list(sp["ids"]) + ([os.environ.get(sp["env"], "")] if sp.get("env") else [])
+        if any(_rt_norm(i) == n for i in ids if i): return k
+    return None
+
+def _rt_classify(prompt, model):
+    """→ (slot, explicit_friendly, only) ؛ هیچ‌کدام نبود یعنی مسیر قدیمی."""
+    m = str(model or "")
+    if m.startswith(("role:", "slot:")):
+        s = _rt_slot_of(m.split(":", 1)[1])
+        if s: return s, None, False
+    if m.startswith(("model:", "only:")):
+        fr = _rt_friendly(m.split(":", 1)[1])
+        if fr: return None, fr, m.startswith("only:")
+    cur = os.environ.get("TA_CURRENT_LLM_ROLE", "")
+    if cur in _TACT: return None, _TACT[cur], False
+    s = _rt_slot_of(cur)
+    if s: return s, None, False
+    p = str(prompt or "")
+    for sig, s in _SIG:
+        if sig in p: return s, None, False
+    fr = _rt_friendly(m)
+    deep_q = {os.environ.get(k, "") for k in ("TRADINGAGENTS_DEEP_THINK_LLM", "TRADINGAGENTS_QUICK_THINK_LLM")}
+    if fr and _CAT[fr]["v"] != "anthropic" and m not in deep_q: return None, fr, False
+    try:
+        f = _rt_sys._getframe(1)
+        for _ in range(14):
+            if f is None: break
+            if f.f_code.co_name in _STK: return _STK[f.f_code.co_name], None, False
+            f = f.f_back
+    except Exception: pass
+    if fr and m not in deep_q: return None, fr, False
+    return None, None, False
+
+def _rt_chain(slot, explicit, only):
+    if explicit: base = [explicit]
+    else:
+        lst = AGENT_ROSTER[_rt_mode()].get(slot) or ["Haiku 5.5"]
+        with _RT["lock"]: _RT["calls"][slot] = n = _RT["calls"].get(slot, 0) + 1
+        try: cap = int(os.environ.get("TA_CEO_MAX_CALLS", "3") or 3)
+        except Exception: cap = 3
+        base = (["Haiku 5.5"] if _rt_mode() == "Eco" else list(_CEO_AFTER_CAP)) if (slot == "s01" and n > cap) else [lst[0]]
+    if only: return base
+    chain = []
+    for fr in base:
+        for x in [fr] + _CAT[fr]["fb"]:
+            if x not in chain: chain.append(x)
+    if "Haiku 5.5" not in chain: chain.append("Haiku 5.5")
+    return chain
+
+_RT_OVR = {}
+try: _RT_OVR = {_rt_norm(k): str(v) for k, v in json.loads(os.environ.get("TA_MODEL_IDS", "") or "{}").items()}      # {"GLM 5.3 Flash": "شناسهٔ دقیق 1xAI"}
+except Exception: pass
+
+def _rt_pick_id(fr):
+    sp = _CAT[fr]
+    cands = ([_RT_OVR[_rt_norm(fr)]] if _rt_norm(fr) in _RT_OVR else []) + ([os.environ.get(sp["env"], "").strip()] if sp.get("env") else []) + list(sp["ids"])
+    cands = [c for c in cands if c]
+    avail = _1xai_models() or set()
+    if not avail: return cands[0]
+    for c in cands:
+        if c in avail: return c
+    if sp["v"] == "anthropic": return None if fr in ("Mythos", "Fable") else cands[0]
+    best = [i for i in avail if all(t in _rt_norm(i) for t in sp["tok"]) and not any(t in _rt_norm(i) for t in sp.get("no", ()))]
+    return sorted(best, key=len)[0] if best else None
+
+class _RtCap(Exception): pass
+
+def _rt_est_toman(model, tin, tout):
+    fr = _rt_friendly(model); p = _CAT[fr]["p"] if fr else (1.0, 4.0)
+    return int((tin * p[0] + tout * p[1]) / 1e6 * _RT_TOMAN_USD * 1.2)
+
+def _rt_spent():
+    """هزینهٔ همین اجرا (همهٔ تماس‌های ثبت‌شده در claude_usage.jsonl، شامل غیر Claude)."""
+    path = os.environ.get("TA_CLAUDE_USAGE_FILE", os.path.join(os.environ.get("TA_DATA", "data"), "claude_usage.jsonl")); tot = 0
+    try:
+        for line in open(path, encoding="utf-8", errors="ignore"):
+            try: r = json.loads(line)
+            except Exception: continue
+            if float(r.get("ts", 0)) < _RT["t0"]: continue
+            tot += int(r["cost_toman"]) if r.get("cost_toman") is not None else _rt_est_toman(r.get("model"), int(r.get("input_tokens", 0) or 0), int(r.get("output_tokens", 0) or 0))
+    except Exception: pass
+    return tot
+
+def _rt_status(e):
+    m = re.search(r"HTTP (\d{3})", str(e)); return int(m.group(1)) if m else 0
+
+def _rt_http(fr, mid, prompt, role):
+    """مسیر OpenAI-سازگار 1xAI برای همهٔ مدل‌های غیر Claude؛ فقط با ONE_XAI_API_KEY."""
+    import requests as _rq
+    key = _rg_secret("ONE_XAI_API_KEY")
+    if not key: raise RuntimeError("ONE_XAI_API_KEY is missing")
+    base = os.environ.get("ONE_XAI_BASE_URL", "https://1xai.ir").rstrip("/")
+    hdr = {"Authorization": "Bearer " + key, "Content-Type": "application/json", "x-1xai-client": "infinity-trader-v37"}
+    mt = int(os.environ.get("TA_XAI_MAX_TOKENS", os.environ.get("TA_CLAUDE_MAX_TOKENS", "4096")) or 4096)
+    to = (10, int(os.environ.get("TA_XAI_TIMEOUT", "150") or 150)); sp = _CAT[fr]; text = ""; usage = {}; r = None
+    if sp["v"] == "openai" and os.environ.get("TA_OPENAI_RESPONSES", "1") != "0":
+        r = _rq.post(base + "/v1/responses", json={"model": mid, "input": str(prompt), "max_output_tokens": mt}, headers=hdr, timeout=to)
+        if r.status_code == 200:
+            d = r.json(); text = d.get("output_text") or ""
+            if not text:
+                for it in d.get("output") or []:
+                    if isinstance(it, dict) and it.get("type") == "message":
+                        text += "".join(c.get("text", "") for c in it.get("content") or [] if isinstance(c, dict))
+            u = d.get("usage") or {}; usage = {"input_tokens": u.get("input_tokens", 0), "output_tokens": u.get("output_tokens", 0)}
+        elif r.status_code in (404, 405) or (r.status_code in (400, 422) and "respons" in r.text.lower()): r = None      # این درگاه Responses را برای مدل ندارد ← chat/completions
+        else: raise RuntimeError(f"1xAI HTTP {r.status_code}: {r.text[:240]}")
+    if not text:
+        pl = {"model": mid, "messages": [{"role": "user", "content": str(prompt)}], "max_tokens": mt, "temperature": 0.1}
+        for _ in range(3):
+            r = _rq.post(base + "/v1/chat/completions", json=pl, headers=hdr, timeout=to)
+            if r.status_code == 400 and "temperature" in r.text.lower() and "temperature" in pl: pl.pop("temperature"); continue
+            if r.status_code == 400 and "max_completion_tokens" in r.text.lower() and "max_tokens" in pl: pl["max_completion_tokens"] = pl.pop("max_tokens"); continue
+            break
+        if r.status_code != 200: raise RuntimeError(f"1xAI HTTP {r.status_code}: {r.text[:240]}")
+        d = r.json(); ch = d.get("choices") or []
+        if not ch: raise RuntimeError("1xAI returned no choices")
+        c = (ch[0].get("message") or {}).get("content") or ""
+        text = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in c) if isinstance(c, list) else str(c)
+        u = d.get("usage") or {}; usage = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
+    text = re.sub(r"<think>.*?</think>", "", str(text), flags=re.S).strip()
+    if not text: raise RuntimeError("model returned empty content")
+    cost = r.headers.get("X-1xai-Cost-Toman") or r.headers.get("x-1xai-cost-toman") if r is not None else None
+    est = cost is None
+    if est: cost = _rt_est_toman(mid, int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0))
+    try: _record_claude_usage(usage, mid, cost_toman=cost, served_model=mid, role=role)
+    except Exception: pass
+    try:      # فایل جدا برای خلاصهٔ هزینهٔ تماس‌های غیر Claude در workflow
+        with open(os.path.join(os.environ.get("TA_DATA", "data"), "router_usage_" + os.environ.get("GITHUB_RUN_ID", "local") + ".jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": time.time(), "model": mid, "slot": role, "in": int(usage.get("input_tokens", 0) or 0), "out": int(usage.get("output_tokens", 0) or 0), "toman": int(float(cost)), "est": est}, ensure_ascii=False) + "\n")
+    except Exception: pass
+    return text
+
+def _rt_mark(fr, e):
+    st = _rt_status(e); msg = str(e)
+    if st == 404 or (st in (400, 401, 403, 422) and re.search(r"model|not found|unsupported|access|permission|not allowed", msg, re.I)): _RT["dead"][fr] = msg[:120]
+
+if getattr(_primary_chat, "__name__", "") != "_router_chat": _primary_chat_orig = _primary_chat      # (اجرای دوباره در نوت‌بوک بی‌خطر)
+def _router_chat(prompt, model=None):
+    if os.environ.get("TA_ROUTER", "1") == "0" or LLM_PROVIDER != "1xai": return _primary_chat_orig(prompt, model)
+    slot, explicit, only = _rt_classify(prompt, model)
+    if not slot and not explicit: return _primary_chat_orig(prompt, model)
+    role = slot or explicit; errs = []; prev = os.environ.get("TA_CURRENT_LLM_ROLE")
+    try: cap = int(float(os.environ.get("TA_COST_CAP_TOMAN", "0") or 0))
+    except Exception: cap = 0
+    for fr in _rt_chain(slot, explicit, only):
+        if fr in _RT["dead"]: continue
+        try:
+            if cap and _rt_spent() >= cap: raise _RtCap(f"سقف هزینهٔ اجرا ({cap:,} تومان) پر شد؛ تماس جدید ارسال نشد.")
+            mid = _rt_pick_id(fr)
+            if not mid: errs.append(f"{fr}: در فهرست مدل‌های این کلید نیست"); _RT["dead"].setdefault(fr, "not listed"); continue
+            if not prev: os.environ["TA_CURRENT_LLM_ROLE"] = str(role)
+            try: txt = _claude_chat(prompt, mid) if _CAT[fr]["v"] == "anthropic" else _rt_http(fr, mid, prompt, os.environ.get("TA_CURRENT_LLM_ROLE") or str(role))
+            finally:
+                if not prev: os.environ.pop("TA_CURRENT_LLM_ROLE", None)
+            if errs: print(f"↪ {_SLOT_FA.get(slot, role)}: جایگزین خودکار {fr} ({mid}) بعد از: {'; '.join(errs)[:200]}")
+            return txt
+        except _RtCap: raise
+        except Exception as e:
+            errs.append(f"{fr}: {type(e).__name__} {str(e)[:110]}"); _rt_mark(fr, e)
+    raise RuntimeError(f"همهٔ مدل‌های نقش {_SLOT_FA.get(slot, role)} ناموفق: " + " | ".join(errs)[:420])
+_primary_chat = _router_chat
+
+def agent_llm(slot, prompt, as_json=False):
+    """برای کدهای دیگر (مثل desk25): agent_llm('s05', prompt) ← مدل ستون حالت فعلی همان عامل."""
+    if as_json: return _llm_json(prompt, "role:" + str(slot))
+    return _llm_raw(prompt, "role:" + str(slot))
+
+def _frontier_tactical_review(prompt, report):
+    """نظر دوم مستقل مدیرعامل طبق جدول: Normal=GPT-6.2 Sol، VIP/Gold=Fable (Mythos خودش تصمیم‌گیر است)، Eco=ندارد. اعداد نهایی همچنان فقط از Python می‌آیند."""
+    if LLM_PROVIDER != "1xai" or os.environ.get("TA_FRONTIER_TACTICAL", "1") != "1": return {}
+    seconds = AGENT_ROSTER[_rt_mode()]["s01"][1:]
+    if not seconds: return {}
+    tactical_prompt = ("You are an independent senior tactical trading analyst. Use only the supplied market evidence. "
+      "Return ONE JSON object in Persian with keys: verdict (GO/WAIT/NO), bias, entry_reference (only an existing engine ID or null), "
+      "sl_reference (only an existing engine ID or null), tp1_reference (existing opposing liquidity ID or null), tp2_reference (existing opposing liquidity ID or null), "
+      "entry_price_proposal, sl_price_proposal, tp1_price_proposal, tp2_price_proposal (numbers only if derivable from the supplied report; otherwise null), "
+      "rr_assessment, invalidation, key_risk, confidence (1-10), rationale. Never invent a level or price. "
+      "Do not override hard risk rules. This is a second opinion, not an execution instruction.\n\nENGINE REPORT:\n" + report + "\n\nBASE SMC ANALYSIS:\n" + prompt)
+    results = {}
+    for fr in seconds:
+        key = {"GPT-6.2 Sol": "gpt"}.get(fr, fr.split()[0].lower())
+        mid = _rt_pick_id(fr)
+        if not mid or fr in _RT["dead"]:
+            results[key] = {"model": fr, "error": "در فهرست قابل‌فراخوانی این کلید 1xAI نیست"}; print(f"ℹ نظر دوم {fr} رد شد: مدل در فهرست کلید نیست."); continue
+        try:
+            os.environ["TA_CURRENT_LLM_ROLE"] = "tactical_" + key
+            j, raw = _llm_json(tactical_prompt, "only:" + fr)
+            results[key] = {"model": mid, "review": j, "raw_excerpt": raw[:1200]}
+        except Exception as e:
+            results[key] = {"model": mid, "error": f"{type(e).__name__}: {str(e)[:180]}"}; print(f"⚠ نظر دوم {fr} ناموفق بود: {type(e).__name__}")
+    os.environ.pop("TA_CURRENT_LLM_ROLE", None)
+    return results
+
+def _frontier_tactical_text():
+    x = AG.get("frontier_tactical") or {}
+    if not x: return "Second-opinion review: not run."
+    out = []
+    for name, item in x.items():
+        if not isinstance(item, dict): continue
+        if item.get("error"): out.append(f"{name.upper()} ({item.get('model')}): unavailable/error: {item['error']}")
+        elif item.get("review"):
+            r = item["review"]
+            out.append(f"{name.upper()} ({item.get('model')}): verdict={r.get('verdict')}; entry={r.get('entry_reference')} / {r.get('entry_price_proposal')}; SL={r.get('sl_reference')} / {r.get('sl_price_proposal')}; TP1={r.get('tp1_reference')} / {r.get('tp1_price_proposal')}; TP2={r.get('tp2_reference')} / {r.get('tp2_price_proposal')}; RR={r.get('rr_assessment')}; invalidation={r.get('invalidation')}; risk={r.get('key_risk')}; confidence={r.get('confidence')}; rationale={r.get('rationale')}")
+    return "\n".join(out) if out else "Second-opinion review returned no usable result."
+
+try:      # جدول فعال این اجرا کنار گزارش‌ها ذخیره می‌شود
+    os.makedirs(os.environ.get("TA_DATA", "data"), exist_ok=True)
+    json.dump({"mode": _rt_mode(), "roster": {s: {"name": _SLOT_FA[s], "models": AGENT_ROSTER[_rt_mode()][s]} for s in _SLOT_FA}}, open(os.path.join(os.environ.get("TA_DATA", "data"), "agent_roster.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print(f"🧭 روتر ۲۵ عاملی v37 فعال · حالت {_rt_mode()} · همهٔ مدل‌ها با ONE_XAI_API_KEY")
+except Exception: pass
+# ═══════════════ پایان روتر v37 ═══════════════
 
 # ---------------- اجرا ----------------
 _notify_orig = notify
