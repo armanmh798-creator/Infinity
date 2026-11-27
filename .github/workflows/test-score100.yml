@@ -1,0 +1,41 @@
+name: test-score100
+# فقط آزمایش: هیچ کلید، هیچ تماس مدل و هیچ ارسالی به تلگرام ندارد.
+on:
+  push:
+    branches: [feat/team3-score100-all]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Apply patch_score to engine.py
+        run: python tools/patch_score.py engine.py
+      - name: Check patched engine
+        run: |
+          python3 - <<'PY'
+          import ast, os
+          src = open("engine.py", encoding="utf-8").read()
+          ast.parse(src)
+          print("engine syntax ok")
+          assert src.count("# [patch] score100") == 1, "marker count"
+          assert src.count("if SCORE100 and os.environ.get(\"TA_STRAT_REQUIRED\"") == 1, "strat lock count"
+          blk = src[src.index("SCORE100 = os.environ"):src.index("def _strict_reject(g)")]
+          ns = {"os": os, "STRAT_REQUIRED": True}
+          exec(blk, ns)
+          g = {"sl": 1.0, "hard": [], "flags": ["a", "b"], "ceo_verdict": "GO"}
+          assert ns["_score_gate"](g) is None
+          print("two normal flags ->", g["_score100"][0])
+          assert g["_score100"][0] == 98.0
+          assert ns["_score_gate"]({"sl": None}) is not None
+          print("no stop-loss -> rejected (hard)")
+          print("STRAT_REQUIRED after lock:", ns["STRAT_REQUIRED"])
+          assert ns["STRAT_REQUIRED"] is False
+          print("ALL CHECKS PASSED")
+          PY
