@@ -23,6 +23,8 @@ on:
         default: "Gold"
         options:
           - ALL
+          - ALLCRYPTO
+          - ALLFOREX
           - Gold
           - NAS100
           - EURUSD
@@ -91,6 +93,10 @@ jobs:
       - name: Apply desk patch (25 agents)
         # اگر وصله اعمال نشود اجرا همین‌جا با خطا می‌ایستد؛ با موتور قبلی ادامه نمی‌دهد.
         run: python tools/patch_desk.py engine.py
+      - name: Apply team3 + ALL patch
+        # اگر لنگری پیدا نشود، فایل دست‌نخورده می‌ماند و هشدار چاپ می‌شود؛ اجرا ادامه می‌دهد.
+        continue-on-error: true
+        run: python tools/patch_team3.py tools/desk25.py engine.py
       - name: Check engines (tiny probe calls)
         # هر موتور تیم با یک تماس بسیار کوچک امتحان می‌شود و نتیجه به تلگرام می‌رود؛ هزینه چند صد تومان.
         continue-on-error: true
