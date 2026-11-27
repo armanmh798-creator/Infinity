@@ -20,11 +20,8 @@ os.environ.setdefault("TA_STRICT_HARD", "1")       # v30: فقط ریسک‌ها
 os.environ.setdefault("TA_LEAN", "0")              # v29: لایه‌های هماهنگ‌کننده/اقتصاددان/شورا در اجراهای مجهز به ایجنت روشن
 os.environ.setdefault("TA_REQUIRE_GO", "0")        # v30: مدیرعامل ناظر است؛ فقط NO صریح وتو می‌کند، WAIT/timeout به‌تنهایی قفل نمی‌کند
 os.environ.setdefault("TA_ANALYSTS", "market,social,news,fundamentals")
-os.environ["TA_LLM_PROVIDER"] = "1xai"             # v38: فقط 1xAI با ONE_XAI_API_KEY؛ Gemini/Google مستقیم، Grok مستقیم و موتور رایگان حذف شده‌اند
-for _k in [k for k in os.environ if k.startswith("GOOGLE_API_KEY") or k in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY", "NVIDIA_API_KEY")]: os.environ.pop(_k, None)
-for _k in ("TA_CLAUDE_FALLBACK", "TA_GROK_FALLBACK", "TA_FALLBACK"): os.environ[_k] = "0"      # هیچ fallback به موتور دیگری؛ جایگزین‌ها را روتر داخل 1xAI انتخاب می‌کند
+os.environ.setdefault("TA_LLM_PROVIDER", "anthropic")  # Claude Sonnet برای deep + Haiku برای quick؛ Gemini پشتیبان
 os.environ.setdefault("TA_LITE_AGENTS", "1")       # v28: اگر تیم اصلی TradingAgents افتاد، ICT/SMC و مدیرعامل با گزارش موتور اجرا شوند
-os.environ.setdefault("TA_ROUTER", "1")           # v37: روتر ۲۵ عاملی؛ هر نقش با مدل ستون حالت فعلی (Normal/VIP/Gold/Eco)، همه با ONE_XAI_API_KEY
 LOGP = os.path.join(tempfile.gettempdir(), "ta_last_run.log")
 RUN_STARTED = time.time()
 
@@ -167,7 +164,7 @@ def _journal_count():
 
 
 def _scrub(t):
-    for k in ("ONE_XAI_API_KEY", "GROK_API_KEY", "NTFY_TOPIC", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
+    for k in ("ONE_XAI_API_KEY", "ANTHROPIC_API_KEY", "GROK_API_KEY", "GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10", "NTFY_TOPIC", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN"):
         v = os.environ.get(k, "")
         if v: t = str(t).replace(v, "***")
     return str(t)
@@ -272,6 +269,10 @@ def _engine_src():
                      (r"^ALL_LLM_TOPK\s*=\s*\d+", f"ALL_LLM_TOPK = {max(0, _tk)}")):
         src, n = re.subn(pat, rep, src, count=1, flags=re.M)
         if n != 1: say(f"⚠ پچ تنظیمات موتور اعمال نشد: {pat[:20]}")
+    # چرخش کلید به‌ازای هر اجرا (به‌جای هر ساعت): شمارندهٔ اجرا از workflow می‌آید
+    if os.environ.get("TA_KEY_START", "").strip().isdigit():
+        src, n = re.subn(r"int\(time\.time\(\) // 3600\) % len\(_GKEYS\)", "int(os.environ.get('TA_KEY_START')) % len(_GKEYS)", src, count=1)
+        if n != 1: say("⚠ پچ چرخش کلید برای هر اجرا اعمال نشد")
     if os.environ.get("TA_EXTRA_STRATS", "1") != "0":      # بازگشت به میانگین (بولینگر+RSI) و مومنتوم (RSI+استوکاستیک) در موتور هستند ولی خاموش بودند؛ بک‌تست خودش بهترین را انتخاب می‌کند
         for k_ in ("meanrev", "mom"):
             src, n = re.subn(r'("%s": dict\(n="[^"]*", e="[^"]*", )run=False' % k_, r"\1run=True", src, count=1)
@@ -308,9 +309,9 @@ def _pre_signal_warning():
 
 _prewarn_thread = None  # اعلان‌های میانی حذف شدند تا گوشی فقط نتیجهٔ نهایی را بگیرد.
 if not os.environ.get("NTFY_TOPIC", "").strip(): say("⚠ NTFY_TOPIC خالی است؛ هیچ اعلانی نمی‌آید.")
-_provider = "1xai"
-_primary_key_ok = bool(os.environ.get("ONE_XAI_API_KEY", "").strip())
-if os.environ.get("TA_AGENTS", "0") != "0" and not _primary_key_ok: say("⚠ ONE_XAI_API_KEY در GitHub Secrets تنظیم نشده است؛ آن را اضافه کنید."); status, rc = "error: no key", 1
+_provider = os.environ.get("TA_LLM_PROVIDER", "anthropic").strip().lower()
+_primary_key_ok = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()) if _provider == "anthropic" else bool(os.environ.get("GROK_API_KEY", "").strip()) if _provider == "grok" else any(os.environ.get(k, "").strip() for k in ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4", "GOOGLE_API_KEY_5", "GOOGLE_API_KEY_6", "GOOGLE_API_KEY_7", "GOOGLE_API_KEY_8", "GOOGLE_API_KEY_9", "GOOGLE_API_KEY_10"))
+if os.environ.get("TA_AGENTS", "0") != "0" and not _primary_key_ok: say(f"⚠ کلید مدل اصلی ({_provider}) تنظیم نشده است؛ Secret مناسب را اضافه کنید."); status, rc = "error: no key", 1
 else:
     try:
         exec(compile(_engine_src(), ENGINE, "exec"), G)
